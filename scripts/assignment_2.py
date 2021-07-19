@@ -2,6 +2,8 @@
 import rospy
 import sys
 import multi_move_base 
+from modular import Modular
+from visited_map_module import VisitedMapModule
 
 def vacuum_cleaning(agent_id):
        
@@ -24,8 +26,11 @@ def vacuum_cleaning(agent_id):
 
 def inspection():
     print('start inspection')
-    raise NotImplementedError
-
+    mod0 = Modular([
+        VisitedMapModule(0)
+    ])
+    print("Running modular robot 0")
+    mod0.run()
 
 
 # If the python node is executed as main process (sourced directly)
@@ -37,23 +42,12 @@ if __name__ == '__main__':
     exec_mode = sys.argv[1] 
     print('exec_mode:' + exec_mode)        
 
-<<<<<<< HEAD
     if exec_mode == 'cleaning':        
-        vacuum_cleaning(0)
-=======
-    agent_id = sys.argv[2]
-    print('agent id:' + agent_id)        
-    if exec_mode == 'cleaning':        
+        agent_id = int(sys.argv[2])
         vacuum_cleaning(agent_id)
->>>>>>> a32ca6a298db4394d3a7727f0480e35541f502bc
+        print('agent id:' + sys.argv[2])        
     elif exec_mode == 'inspection':
         inspection()
     else:
         print("Code not found")
-<<<<<<< HEAD
         raise NotImplementedError
-
-
-=======
-        raise NotImplementedError
->>>>>>> a32ca6a298db4394d3a7727f0480e35541f502bc
