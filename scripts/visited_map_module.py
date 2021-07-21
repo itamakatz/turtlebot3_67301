@@ -33,9 +33,6 @@ class VisitedMapModule(Module):
         plt.imshow(self.visited_map, cmap='gray')
         plt.show()
 
-    def update(self):
-        print('u')
-
 
     def footprint_to_map(self, x, y):
         map_y = self.map_width - int((x + 10) * 20)

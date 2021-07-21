@@ -4,6 +4,8 @@ import sys
 import multi_move_base 
 from modular import Modular
 from visited_map_module import VisitedMapModule
+from count_module import CountModule
+from roomba_module import RoombaModule
 
 def vacuum_cleaning(agent_id):
        
@@ -27,7 +29,9 @@ def vacuum_cleaning(agent_id):
 def inspection():
     print('start inspection')
     mod0 = Modular([
-        VisitedMapModule(0)
+        VisitedMapModule(0),
+        CountModule(0),
+        RoombaModule(0)
     ])
     print("Running modular robot 0")
     mod0.run()
