@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import rospy
 import sys
 import numpy as np
@@ -12,14 +13,15 @@ COSTMAP_THRESHOLD = 0.3
 PIXEL_THRESHOLD = 50
 
 class CountModule(Module):
+
     def __init__(self, agent_id):
+        super(CountModule, self).__init__(agent_id, 'CountModule')
         self.cli_cmds = ['c', 'count', 'o', 't']
-        self.base_topic = '/tb3_' + str(agent_id)
 
     def cli(self, cmd):
         if cmd in ['c', 'count']:
             self.update_costmap()
-            print(self.count_shapes())
+            self.print_v(self.count_shapes())
         elif cmd in ['o']:
             self.update_costmap()
             plt.imshow(self.global_costmap, cmap='gray')
@@ -29,8 +31,11 @@ class CountModule(Module):
             plt.imshow((self.global_costmap / 255) > COSTMAP_THRESHOLD, cmap='gray')
             plt.show()
 
+    def update(self): 
+        pass # todo
+
     def update_costmap(self):
-        map_msg = rospy.wait_for_message(self.base_topic + '/move_base/global_costmap/costmap', OccupancyGrid, timeout=None)
+        map_msg = rospy.wait_for_message(self.get_topic('/move_base/global_costmap/costmap'), OccupancyGrid, timeout=None)
         self.global_costmap = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height))    
 
     def count_shapes(self):

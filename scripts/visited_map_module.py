@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import rospy
 import sys
 import numpy as np
@@ -13,26 +14,28 @@ VISITED_COLOR = 50
 
 class VisitedMapModule(Module):
     def __init__(self, agent_id):
-        self.cli_cmds = ['v', 'visited_map']
-        self.base_topic = '/tb3_' + str(agent_id)
-        self.loc_sub = rospy.Subscriber(self.base_topic + '/move_base/local_costmap/footprint', PolygonStamped, update_position, self)
+        super(VisitedMapModule, self).__init__(agent_id, 'VisitedMapModule')
 
-        print("Setting up visited map module...")
-        map_msg = rospy.wait_for_message(self.base_topic+'/map', OccupancyGrid, timeout=None)
+        self.cli_cmds = ['v', 'visited_map']
+        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
+        self.print_v(self.get_topic('/move_base/local_costmap/footprint'))
+        self.print_v("Setting up visited map module...")
+        map_msg = rospy.wait_for_message(self.get_topic('/map'), OccupancyGrid, timeout=None)
+        
+        # == init_map == #
         self.visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
         self.visited_map = np.fliplr(np.rot90(self.visited_map))
         self.map_height = self.visited_map.shape[0] # NOTE - this may be revered, as in map_height=shape[1] etc.
         self.map_width = self.visited_map.shape[1]
         self.starting_unexplored = (self.visited_map == 0).sum()
+
         self.percent_array = np.zeros((1,2))
         self.start_time = rospy.get_rostime().secs
-        print("Finished setting up visited map module")
-
+        self.print_v("Finished setting up visited map module")
 
     def cli(self, cmd):
         plt.imshow(self.visited_map, cmap='gray')
         plt.show()
-
 
     def footprint_to_map(self, x, y):
         map_y = self.map_width - int((x + 10) * 20)
@@ -44,8 +47,8 @@ class VisitedMapModule(Module):
         footprint_x = ((self.map_width - y) / 20) - 10
         return (footprint_x, footprint_y)
 
-
 def update_position(msg, mod):
+    mod.print_v("in update_position")
     center_x = sum([p.x for p in msg.polygon.points]) / len(msg.polygon.points)
     center_y = sum([p.y for p in msg.polygon.points]) / len(msg.polygon.points)
     

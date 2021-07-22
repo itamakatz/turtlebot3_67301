@@ -1,10 +1,13 @@
+#!/usr/bin/env python
 import rospy
 import sys
+from numpy import random
 import numpy as np
 from modular import Module
 from matplotlib import pyplot as plt
 import matplotlib
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
 # matplotlib.use('Agg')
 
 SPEED = 0.3
@@ -17,21 +20,23 @@ MIN_TURN_SEC = 1
 MAX_TURN_SEC = 5
 
 THRESHOLD_DISTANCE = 0.5
-DIST_PRINT_THRESHOLD = 0.05
+# DIST_PRINT_THRESHOLD = 0.05
 
 FORWARD_STATE = 0
 TURN_STATE = 1
 
 class RoombaModule(Module):
-    def __init__(self, agent_id):
-        self.cli_cmds = []
-        self.base_topic = '/tb3_' + str(agent_id)
 
-        self.vel_pub = rospy.Publisher(self.base_topic + '/cmd_vel', Twist, queue_size=10)
+    def __init__(self, agent_id):
+        super(RoombaModule, self).__init__(agent_id, 'RoombaModule')
+        self.print_v("start roomba init")
+        self.vel_pub = rospy.Publisher(self.get_topic('/cmd_vel'), Twist, queue_size=10)
+        self.scan_sub = rospy.Subscriber(self.get_topic('/scan'), LaserScan, on_scan_change, self)
         self.vel_msg = Twist()
         self.front_min_distance = float('inf')
         self.wide_min_distance = float('inf')
         self.state = FORWARD_STATE
+        self.print_v("end roomba init")
 
     def update(self):
         if self.state == FORWARD_STATE:
@@ -53,9 +58,18 @@ class RoombaModule(Module):
                 self.state = FORWARD_STATE
                 self.stop()
 
-
     def stop(self):
         self.vel_msg.linear.x = 0
         self.vel_msg.angular.z = 0
         self.vel_pub.publish(self.vel_msg)
 
+    def on_scan_change(self, msg):
+        self.ranges = msg.ranges
+        self.wide_min_distance = get_min_from_angle(msg.ranges, OPENING_ANGLE_IN_DEGREES )
+        self.front_min_distance = get_min_from_angle(msg.ranges, OPENING_ANGLE_IN_DEGREES // 2 )
+
+def get_min_from_angle(array, angle):
+    in_angle = array[:angle] + array[-angle:]
+    return min(in_angle)
+
+def on_scan_change(msg, roomba): roomba.on_scan_change(msg)

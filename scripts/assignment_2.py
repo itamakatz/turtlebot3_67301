@@ -28,13 +28,14 @@ def vacuum_cleaning(agent_id):
 
 def inspection():
     print('start inspection')
-    mod0 = Modular([
-        VisitedMapModule(0),
-        CountModule(0),
-        RoombaModule(0)
+    id = 0
+    robot = Modular([
+        VisitedMapModule(id),
+        CountModule(id),
+        RoombaModule(id)
     ])
-    print("Running modular robot 0")
-    mod0.run()
+    print("Running modular robot " + str(id))
+    robot.run()
 
 
 # If the python node is executed as main process (sourced directly)
