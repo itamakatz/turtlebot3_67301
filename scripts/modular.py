@@ -13,7 +13,7 @@ class Module(object):
         self.name = name
         self.verbose_name = self.name + '.' + str(self.agent_id) + ' | '
 
-    def update(self): pass
+    def update(self): return None
     def cli(self, cmd): pass
 
     def print_v(self, msg): 
@@ -21,7 +21,7 @@ class Module(object):
         print(self.verbose_name + msg)
     
     def get_topic(self, topic): 
-        self.print_v("composed topic: '" + self.base_topic + topic + "'")
+        # self.print_v("composed topic: '" + self.base_topic + topic + "'")
         return self.base_topic + topic
 
 class Modular:
@@ -32,18 +32,24 @@ class Modular:
         for module in self.modules:
             for cmd in module.cli_cmds:
                 self.cli_cmds[cmd].append(module)
-    
+           
     def run(self):
         # Update the modules
         while (not rospy.is_shutdown()):
-            for module in self.modules: module.update()
+            for module in self.modules: 
+                optional_msg = module.update()
+                if(optional_msg is not None): self.parse_cli(optional_msg)
+
             # Parse cli commands
-            has_input, _, _ = select.select( [sys.stdin], [], [], 0.1 ) 
+            has_input, _, _ = select.select( [sys.stdin], [], [], 0.1 )
             if (has_input):
                 cli_str = sys.stdin.readline().strip().lower()
                 print("got cli command: '" + cli_str + "'")
-                if cli_str in ['k', 'kill']: 
-                    print("killing program")
-                    sys.exit()
-                for module in self.cli_cmds[cli_str]: 
-                    module.cli(cli_str)
+                self.parse_cli(cli_str)
+
+    def parse_cli(self, msg):
+        if msg in ['k', 'kill']: 
+            print("killing program")
+            sys.exit()
+        for module in self.cli_cmds[msg]: 
+            module.cli(msg)

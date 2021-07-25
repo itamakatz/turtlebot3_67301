@@ -48,7 +48,6 @@ class VisitedMapModule(Module):
         return (footprint_x, footprint_y)
 
 def update_position(msg, mod):
-    mod.print_v("in update_position")
     center_x = sum([p.x for p in msg.polygon.points]) / len(msg.polygon.points)
     center_y = sum([p.y for p in msg.polygon.points]) / len(msg.polygon.points)
     
