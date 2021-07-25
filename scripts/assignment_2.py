@@ -5,6 +5,7 @@ import os
 import multi_move_base 
 import actionlib
 from visited_map_module import VisitedMapModule
+from room_inspector_module import RoomInspectorModule
 from std_msgs import msg
 from roomba_module import RoombaModule
 from nav_msgs.msg import OccupancyGrid, MapMetaData
@@ -13,7 +14,13 @@ from modular import Module, Modular
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from count_module import CountModule
 from base_collector_module import BaseCollectorModule
+import numpy as np
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 
+ROOM_NUMBER = 3
+ROOM_COLORS = ['white', 'red', 'blue']
 
 # class BaseCollectorModule(Module):
 
@@ -86,16 +93,36 @@ def print_lacation(agent_id):
     print("Current location in the map: " + str(x_id) + "," + str(y_id))
 
 def inspection():
+    room_map = make_rooms()
     print('start inspection')
     id = 0
     robot = Modular([
-        VisitedMapModule(id),
-        CountModule(id),
-        RoombaModule(id)
+        RoomInspectorModule(id, room_map == 1),
     ])
     print("Running modular robot " + str(id))
     robot.run()
 
+    movebase_client(self.agent_id, dirt_list[0][0], dirt_list[0][1]) 
+
+def make_rooms():
+    map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
+    map = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0
+    points_x, points_y = np.where(map == False)
+    points = np.dstack([points_x, points_y])[0, :, :]
+    kmeans = KMeans(n_clusters=ROOM_NUMBER, random_state=0).fit(points)
+    
+    coloring = kmeans.predict(points)
+    
+    room_map = np.zeros(map.shape)
+
+    for i in range(points.shape[0]):
+        room_map[points[i, 0], points[i, 1]] = coloring[i] + 1
+
+    room_map = np.fliplr(np.rot90(room_map))
+    # tell imshow about color map so that only set colors are used
+    # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
+    # plt.show()
+    return room_map
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
