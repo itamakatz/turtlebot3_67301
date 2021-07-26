@@ -42,6 +42,11 @@ class RoomInspectorModule(Module):
 
 
     def update(self):
+        # Update the Costmap:
+        map_msg = rospy.wait_for_message(self.get_topic('/move_base/global_costmap/costmap'), OccupancyGrid, timeout=None)
+        self.global_costmap = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height))    
+        
+        # Handle the moving:
         if not self.is_moving:
             self.is_moving = True
             x, y = self.sample_unvisited_point_in_room()

@@ -16,8 +16,12 @@ from count_module import CountModule
 from base_collector_module import BaseCollectorModule
 import numpy as np
 from sklearn.cluster import KMeans
+from cv2 import floodFill
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+
+COSTMAP_THRESHOLD = 0.25
+PIXEL_THRESHOLD = 20
 
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
@@ -105,6 +109,8 @@ def inspection():
     while(not rospy.is_shutdown()):
         robot1.run_single_round()
         robot2.run_single_round()
+        shapes = count_shapes(robot1.modules[0].global_costmap, robot2.modules[0].global_costmap)
+        print("Number of shapes: ", shapes)
 
 def make_rooms():
     map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
@@ -122,9 +128,35 @@ def make_rooms():
 
     room_map = np.fliplr(np.rot90(room_map))
     # tell imshow about color map so that only set colors are used
-    plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
-    plt.show()
+    # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
+    # plt.show()
     return room_map
+
+def count_shapes(costmap1, costmap2):
+    # merge the costmaps:
+    costmap = np.maximum(costmap1, costmap2)
+    thre_map = ((costmap / 255) > COSTMAP_THRESHOLD).astype(np.float)
+    # plt.imshow(costmap, cmap='gray')
+    # plt.show()
+    # plt.imshow(thre_map, cmap='gray')
+    # plt.show()
+    count = -2 # The first one is the outer walls
+    # First nonempty index:
+    x_i, y_i = np.where(thre_map == 1)
+    while x_i.shape[0] != 0:
+        x = x_i[0]
+        y = y_i[0]
+        # Fill it
+        thre_map = floodFill(thre_map, (x, y), 0.25)
+        # if we colored more than PIXEL_THRESHOLD pixels add one to the count
+        colored_pixels = (thre_map == 0.25).sum()
+        if colored_pixels > PIXEL_THRESHOLD:
+            count += 1
+        # Return them to a different color
+        thre_map[np.where(thre_map==0.25)] = 0.5
+        
+        x_i, y_i = np.where(thre_map == 1)
+    return count
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
