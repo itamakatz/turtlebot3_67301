@@ -11,86 +11,64 @@ from roomba_module import RoombaModule
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from modular import Module, Modular
-from geometry_msgs.msg import PoseWithCovarianceStamped
 from count_module import CountModule
 from base_collector_module import BaseCollectorModule
 import numpy as np
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import kneighbors_graph
+
+from utils import get_position, get_dirt_distances, generate_dirt
 
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
-# class BaseCollectorModule(Module):
+class AdvancedCollectorModule(Module):
 
-#     def __init__(self, agent_id):
-#         super(BaseCollectorModule, self).__init__(agent_id, 'BaseCollectorModule')
-#         self.cli_cmds = []
+    def __init__(self, agent_id):
+        super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
+        self.cli_cmds = []
+        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        dirt_list = np.array(eval(dirt.data))
+        self.print_v(dirt_list,True)
+        # X = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
+        X = np.array([[-1, -1], [3, 2]])
+        nbrs = NearestNeighbors(n_neighbors=len(dirt_list), algorithm='ball_tree').fit(dirt_list)
+        distances, indices = nbrs.kneighbors(X)
+        self.print_v(indices,True)
+        self.print_v(distances,True)
+        self.print_v(nbrs.kneighbors_graph(X).toarray(),True)
+        
+        # plt.scatter(dirt_list[:,0], dirt_list[:,1], c='#00FF00', label="dirt_list")
+        # plt.scatter(X[:,0], X[:,1], c='#FFFF00', label="X")
+        # plt.show()
 
-#     def update(self): 
+        lengths1 = get_dirt_distances(self.agent_id)
+        lengths1
+        self.print_v(lengths1)
+        lengths2 = get_dirt_distances(self.get_other_id())
+        self.print_v(lengths2)
 
-#         location = rospy.wait_for_message(self.get_topic('/amcl_pose'), PoseWithCovarianceStamped, 1)
-#         p = location.pose.pose.position
-#         self.print_v("Current location: " + str(p.x) + "," + str(p.y))
-
-#         try:
-#             dirt = rospy.wait_for_message("/dirt",msg.String, 1)
-#             dirt_list = eval(dirt.data)
-#             self.print_v("received: " + dirt.data)
-#         except rospy.ROSException:
-#             self.print_v("no dirt left")
-#             return
-
-#         if(len(dirt_list) == 0):
-#             self.print_v("no dirt left")
-#             return
-
-#         self.print_v("next dirt location: " + str(dirt_list[0][0]) + "," + str(dirt_list[0][1]))
-
-#         movebase_client(self.agent_id, dirt_list[0][0], dirt_list[0][1]) 
-
-# def movebase_client(agent_id,x,y):
-
-#     print("moving to: " + str(x) + "," + str(y))
-
-#     client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
-#     client.wait_for_server() # Waits until the action server has started up and started listening for goals.
-#     goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
-#     goal.target_pose.header.frame_id = "map"
-#     goal.target_pose.header.stamp = rospy.Time.now()
-#     goal.target_pose.pose.position.x = x
-#     goal.target_pose.pose.position.y = y
-#     goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
-#     client.send_goal(goal) # Sends the goal to the action server.
-#     rospy.loginfo("New goal command received!")
-#     wait = client.wait_for_result() # Waits for the server to finish performing the action.
-   
-#     if not wait:
-#         # If the result doesn't arrive, assume the Server is not available
-#         rospy.logerr("Action server not available!")
-#         rospy.signal_shutdown("Action server not available!")
-#     else:
-#         print("finished!")
-#         return client.get_result()   # Result of executing the action
+    def update(self): pass
 
 def vacuum_cleaning(agent_id):
        
     print('start cleaning')
+    # if(agent_id == 1):
+    #     robot = Modular([
+    #         AdvancedCollectorModule(agent_id)
+    #     ])
+    # if(agent_id == 0):
     robot = Modular([
         BaseCollectorModule(agent_id)
     ])
+    # else:
+    #     raise NotImplementedError
+
     print("Running modular robot " + str(agent_id))
     robot.run()
-
-def print_lacation(agent_id):
-    mMap_mdata = rospy.wait_for_message('/tb3_%d/map_metadata'%agent_id,MapMetaData)
-    location = rospy.wait_for_message('/tb3_%d/amcl_pose'%agent_id, PoseWithCovarianceStamped)
-    p = location.pose.pose.position
-    x_id = int((p.x - mMap_mdata.origin.position.x)/mMap_mdata.resolution)
-    y_id = int((p.y - mMap_mdata.origin.position.y)/mMap_mdata.resolution)
-    print("Current location: " + str(p.x) + "," + str(p.y))
-    print("Current location in the map: " + str(x_id) + "," + str(y_id))
 
 def inspection():
     room_map = make_rooms()
@@ -135,11 +113,13 @@ if __name__ == '__main__':
     exec_mode = sys.argv[1] 
     print('exec_mode:' + exec_mode)        
     # id = int(sys.argv[2])
-    # print_lacation(id)
+    # print_position(id)
     # x = 1.3
     # y = -3.2
     # result = movebase_client(id,x,y)
-    # print_lacation(id)
+    # print_position(id)
+
+    # generate_dirt()
 
     if exec_mode == 'cleaning':        
         agent_id = int(sys.argv[2])

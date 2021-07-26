@@ -27,6 +27,8 @@ class VisitedMapModule(Module):
         self.visited_map = np.fliplr(np.rot90(self.visited_map))
         self.map_height = self.visited_map.shape[0] # NOTE - this may be revered, as in map_height=shape[1] etc.
         self.map_width = self.visited_map.shape[1]
+        self.map_resolution = map_msg.info.resolution
+        self.map_origin_translation = map_msg.info.pose.position
         self.starting_unexplored = (self.visited_map == 0).sum()
 
         self.percent_array = np.zeros((1,2))
@@ -38,13 +40,13 @@ class VisitedMapModule(Module):
         plt.show()
 
     def footprint_to_map(self, x, y):
-        map_y = self.map_width - int((x + 10) * 20)
-        map_x = self.map_height - int((y + 10) * 20)
+        map_y = self.map_width - int((x - self.map_origin_translation.x) / self.map_resolution)
+        map_x = self.map_height - int((y - self.map_origin_translation.y) / self.map_resolution)
         return (map_x, map_y)
 
     def map_to_footprint(self, x, y):
-        footprint_y = ((self.map_height - x) / 20) - 10
-        footprint_x = ((self.map_width - y) / 20) - 10
+        footprint_y = ((self.map_height - x) * self.map_resolution) + self.map_origin_translation.x
+        footprint_x = ((self.map_width - y) * self.map_resolution) + self.map_origin_translation.y
         return (footprint_x, footprint_y)
 
 def update_position(msg, mod):

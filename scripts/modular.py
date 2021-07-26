@@ -16,13 +16,18 @@ class Module(object):
     def update(self): return None
     def cli(self, cmd): pass
 
-    def print_v(self, msg): 
+    def print_v(self, msg, newline = False): 
         '''verbose print'''
-        print(self.verbose_name + msg)
+        if(newline): print(self.verbose_name); print(msg)
+        else: print(self.verbose_name + str(msg))
     
     def get_topic(self, topic): 
         # self.print_v("composed topic: '" + self.base_topic + topic + "'")
         return self.base_topic + topic
+
+    def get_other_id(self): 
+        '''returns the id of the other agent'''
+        return abs(self.agent_id-1)
 
 class Modular:
 

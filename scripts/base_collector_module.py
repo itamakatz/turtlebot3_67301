@@ -8,15 +8,51 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from modular import Module
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
+from utils import movebase_client, get_dirt_distances
+from nav_msgs.msg import OccupancyGrid
+
 class BaseCollectorModule(Module):
 
     def __init__(self, agent_id):
         super(BaseCollectorModule, self).__init__(agent_id, 'BaseCollectorModule')
         self.cli_cmds = []
+        self.dirt_distances = get_dirt_distances(self.agent_id)
+        self.print_v("Finished init")
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
+        visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
+        visited_map = np.fliplr(np.rot90(visited_map))
+
+        map_resolution = map_msg.info.resolution
+        map_origin_translation = map_msg.info.origin.position
+        map_height = visited_map.shape[0]
+        map_width = visited_map.shape[1]
+        from scipy.ndimage.filters import gaussian_filter
+
+        visited_map = gaussian_filter(visited_map, sigma=7)
+        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        dirt_list = np.array(eval(dirt.data))
+        plt.imshow(visited_map, cmap='gray')
+        xs = map(lambda x: map_width - int((x - map_origin_translation.x) / map_resolution), dirt_list[:,0])
+        ys = map(lambda y: map_height - int((y - map_origin_translation.y) / map_resolution) , dirt_list[:,1])
+        plt.scatter(xs, ys, c='w')
+        are_zero = []
+        for k in self.dirt_distances.keys():
+            if(self.dirt_distances[k] == 0):
+                x = map_width - int((k[0] - map_origin_translation.x) / map_resolution)
+                y = map_height - int((k[1] - map_origin_translation.y) / map_resolution)
+                are_zero.append([x,y])
+
+        are_zero = np.array(are_zero)
+        plt.scatter(are_zero[:,0], are_zero[:,1], c='r')
+        plt.show()
 
     def update(self): 
-
-        location = rospy.wait_for_message(self.get_topic('/amcl_pose'), PoseWithCovarianceStamped)
+        self.print_v("in update")
+        location = rospy.wait_for_message(self.get_topic('/amcl_pose'), PoseWithCovarianceStamped, 1)
         p = location.pose.pose.position
         self.print_v("Current location: " + str(p.x) + "," + str(p.y))
 
@@ -32,30 +68,16 @@ class BaseCollectorModule(Module):
             self.print_v("no dirt left")
             return
 
+        updated_dirt_distances = {}
+        for dirt in dirt_list:
+            updated_dirt_distances[(dirt[0], dirt[1])] = self.dirt_distances[(dirt[0], dirt[1])]
+        closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
+        self.print_v(updated_dirt_distances)
+        self.print_v("")
+        self.print_v(closest_dirt)
+        self.print_v(self.dirt_distances[closest_dirt])
+        self.print_v(updated_dirt_distances[closest_dirt])
+        self.print_v("")
         # self.print_v("next dirt location: " + str(dirt_list[0][0]) + "," + str(dirt_list[0][1]))
 
-        movebase_client(self.agent_id, dirt_list[0][0], dirt_list[0][1]) 
-
-def movebase_client(agent_id,x,y):
-
-    print("moving to: " + str(x) + "," + str(y))
-
-    client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
-    client.wait_for_server() # Waits until the action server has started up and started listening for goals.
-    goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
-    goal.target_pose.header.frame_id = "map"
-    goal.target_pose.header.stamp = rospy.Time.now()
-    goal.target_pose.pose.position.x = x
-    goal.target_pose.pose.position.y = y
-    goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
-    client.send_goal(goal) # Sends the goal to the action server.
-    rospy.loginfo("New goal command received!")
-    wait = client.wait_for_result() # Waits for the server to finish performing the action.
-   
-    if not wait:
-        # If the result doesn't arrive, assume the Server is not available
-        rospy.logerr("Action server not available!")
-        rospy.signal_shutdown("Action server not available!")
-    else:
-        print("finished!")
-        return client.get_result()   # Result of executing the action
+        movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1]) 
