@@ -36,16 +36,21 @@ class Modular:
     def run(self):
         # Update the modules
         while (not rospy.is_shutdown()):
-            for module in self.modules: 
-                optional_msg = module.update()
-                if(optional_msg is not None): self.parse_cli(optional_msg)
+            self.run_single_round()   
 
-            # Parse cli commands
-            has_input, _, _ = select.select( [sys.stdin], [], [], 0.1 )
-            if (has_input):
-                cli_str = sys.stdin.readline().strip().lower()
-                print("got cli command: '" + cli_str + "'")
-                self.parse_cli(cli_str)
+    # Needed for the parallels runs:
+    def run_single_round(self):
+        for module in self.modules: 
+            optional_msg = module.update()
+            if(optional_msg is not None): self.parse_cli(optional_msg)
+
+        # Parse cli commands
+        has_input, _, _ = select.select( [sys.stdin], [], [], 0.1 )
+
+        if (has_input):
+            cli_str = sys.stdin.readline().strip().lower()
+            print("got cli command: '" + cli_str + "'")
+            self.parse_cli(cli_str)
 
     def parse_cli(self, msg):
         if msg in ['k', 'kill']: 

@@ -24,6 +24,8 @@ class RoomInspectorModule(Module):
         self.print_v("Setting up room inspector module...")
         map_msg = rospy.wait_for_message(self.get_topic('/map'), OccupancyGrid, timeout=None)
         self.room_map = room_map
+        self.client = actionlib.SimpleActionClient('/tb3_%d/move_base'%self.agent_id, MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
+        self.client.wait_for_server() # Waits until the action server has started up and started listening for goals.
         
         # == init_map == #
         self.visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
@@ -34,18 +36,23 @@ class RoomInspectorModule(Module):
 
         self.percent_array = np.zeros((1,2))
         self.start_time = rospy.get_rostime().secs
+        self.is_moving = False
+        self.verbose = True
         self.print_v("Finished setting up room inspector module")
 
+
     def update(self):
-        x, y = self.sample_unvisited_point_in_room()
-        x, y = self.map_to_footprint(x, y)
-        print('Moving to X:', x, 'Y:', y)
-        movebase_client(self.agent_id, x, y)
+        if not self.is_moving:
+            self.is_moving = True
+            x, y = self.sample_unvisited_point_in_room()
+            x, y = self.map_to_footprint(x, y)
+            print('Moving to X:', x, 'Y:', y)
+            self.movebase_client(x, y)
 
     def sample_unvisited_point_in_room(self):
-        x = np.random.randint(self.map_width)
+        x = np.random.  randint(self.map_width)
         y = np.random.randint(self.map_height)
-        while self.visited_map[y, x] != 100 and self.room_map[y, x] != True:
+        while self.visited_map[y, x] != VISITED_COLOR and self.room_map[y, x] != True:
             x = np.random.randint(self.map_width)
             y = np.random.randint(self.map_height)
         return x, y
@@ -68,30 +75,24 @@ class RoomInspectorModule(Module):
         footprint_x = ((self.map_width - y) / 20) - 10
         return (footprint_x, footprint_y)
 
-def movebase_client(agent_id, x, y):
+    def movebase_client(self, x, y):
+        print("moving to: " + str(x) + "," + str(y))
+        goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
+        goal.target_pose.header.frame_id = "map"
+        goal.target_pose.header.stamp = rospy.Time.now()
+        goal.target_pose.pose.position.x = x
+        goal.target_pose.pose.position.y = y
+        goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
+        self.client.send_goal(goal, done_cb=self.goal_finished) # Sends the goal to the action server.
+        rospy.loginfo("New goal command sent!")
 
-    print("moving to: " + str(x) + "," + str(y))
-
-    client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
-    client.wait_for_server() # Waits until the action server has started up and started listening for goals.
-    goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
-    goal.target_pose.header.frame_id = "map"
-    goal.target_pose.header.stamp = rospy.Time.now()
-    goal.target_pose.pose.position.x = x
-    goal.target_pose.pose.position.y = y
-    goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
-    client.send_goal(goal) # Sends the goal to the action server.
-    rospy.loginfo("New goal command received!")
-    wait = client.wait_for_result() # Waits for the server to finish performing the action.
-   
-    if not wait:
-        # If the result doesn't arrive, assume the Server is not available
-        rospy.logerr("Action server not available!")
-        rospy.signal_shutdown("Action server not available!")
-    else:
-        print("finished!")
-        return client.get_result()   # Result of executing the action
-
+    def goal_finished(self, state, result):
+        """
+        Gets called after the move_base finished, both in case of sucess and failure
+        """
+        if self.verbose:
+            rospy.loginfo("Action server is done. State: %s, result: %s" % (str(state), str(result)))
+        self.is_moving = False
 
 def update_position(msg, mod):
     center_x = sum([p.x for p in msg.polygon.points]) / len(msg.polygon.points)

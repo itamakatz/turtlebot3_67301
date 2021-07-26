@@ -19,7 +19,7 @@ from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-ROOM_NUMBER = 3
+ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
 # class BaseCollectorModule(Module):
@@ -95,14 +95,16 @@ def print_lacation(agent_id):
 def inspection():
     room_map = make_rooms()
     print('start inspection')
-    id = 0
-    robot = Modular([
-        RoomInspectorModule(id, room_map == 1),
+    robot1 = Modular([
+        RoomInspectorModule(0, room_map == 1),
     ])
-    print("Running modular robot " + str(id))
-    robot.run()
-
-    movebase_client(self.agent_id, dirt_list[0][0], dirt_list[0][1]) 
+    robot2 = Modular([
+        RoomInspectorModule(1, room_map == 2),
+    ])
+    print("Running modular robots ")
+    while(not rospy.is_shutdown()):
+        robot1.run_single_round()
+        robot2.run_single_round()
 
 def make_rooms():
     map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
@@ -120,8 +122,8 @@ def make_rooms():
 
     room_map = np.fliplr(np.rot90(room_map))
     # tell imshow about color map so that only set colors are used
-    # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
-    # plt.show()
+    plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
+    plt.show()
     return room_map
 
 # If the python node is executed as main process (sourced directly)
