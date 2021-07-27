@@ -141,30 +141,38 @@ def make_rooms():
     return room_map
 
 def count_shapes(costmap1, costmap2):
+    CURRENT_COLOR = 25
+    PASSED_COLOR = 50
+    OBS_COLOR = 100
     # merge the costmaps:
     costmap = np.maximum(costmap1, costmap2)
-    thre_map = ((costmap / 255) > COSTMAP_THRESHOLD).astype(np.float)
+    # print("costmap max is ", np.max(costmap))
+    # print("costmap min is ", np.min(costmap))
+    thre_map = ((costmap.astype(np.float) / 255) > COSTMAP_THRESHOLD).astype(np.float)
+    thre_map = (thre_map*100).astype(np.uint8)
+    # print("threshold max is ", np.max(thre_map))
+    # print("threshold min is ", np.min(thre_map))
     # plt.imshow(costmap, cmap='gray')
     # plt.show()
     # plt.imshow(thre_map, cmap='gray')
     # plt.show()
-    count = -2 # The first one is the outer walls
+    count = -3 # The first one is the outer walls, two robots
     # First nonempty index:
-    x_i, y_i = np.where(thre_map == 1)
+    x_i, y_i = np.where(thre_map == OBS_COLOR)
     while x_i.shape[0] != 0:
         x = x_i[0]
         y = y_i[0]
         # Fill it
-        thre_map = floodFill(thre_map, (x, y), 0.25)
+        floodFill(thre_map, None, (y, x), CURRENT_COLOR)
         # if we colored more than PIXEL_THRESHOLD pixels add one to the count
-        colored_pixels = (thre_map == 0.25).sum()
+        colored_pixels = (thre_map == CURRENT_COLOR).sum()
         if colored_pixels > PIXEL_THRESHOLD:
             count += 1
         # Return them to a different color
-        thre_map[np.where(thre_map==0.25)] = 0.5
-        
-        x_i, y_i = np.where(thre_map == 1)
+        thre_map[np.where(thre_map == CURRENT_COLOR)] = PASSED_COLOR
+        x_i, y_i = np.where(thre_map == OBS_COLOR)
     return count
+
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
