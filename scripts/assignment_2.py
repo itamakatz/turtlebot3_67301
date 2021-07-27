@@ -34,6 +34,7 @@ class AdvancedCollectorModule(Module):
     def __init__(self, agent_id):
         super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
         self.cli_cmds = []
+        self.finish = False
         dirt = rospy.wait_for_message("/dirt",msg.String, 1)
         dirt_list = np.array(eval(dirt.data))
         self.print_v(dirt_list,True)
@@ -56,15 +57,24 @@ class AdvancedCollectorModule(Module):
         self.print_v(lengths2)
 
     def update(self): 
-        self.print_v("in update")
-        current_p = get_position(agent_id)
+        current_p = get_position(self.agent_id)
         self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
+        updated_dirt_distances = get_dirt_distances(self.agent_id)
+
+        if(not updated_dirt_distances and not self.finish):
+            self.finish = True
+            print("no more dirt")
+            return 'v'
+
+        closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
+        movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1])         
 
 def vacuum_cleaning(agent_id):
        
     print('start cleaning')
     robot = Modular([
-        BaseCollectorModule(agent_id)
+        BaseCollectorModule(agent_id),
+        VisitedMapModule(agent_id)
     ])
     
     # if(agent_id == 1):
@@ -158,19 +168,9 @@ def count_shapes(costmap1, costmap2):
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
-
-    # Initializes a rospy node to let the SimpleActionClient publish and subscribe
     
     exec_mode = sys.argv[1] 
     print('exec_mode:' + exec_mode)        
-    # id = int(sys.argv[2])
-    # print_position(id)
-    # x = 1.3
-    # y = -3.2
-    # result = movebase_client(id,x,y)
-    # print_position(id)
-
-    # generate_dirt()
 
     if exec_mode == 'cleaning':        
         agent_id = int(sys.argv[2])
@@ -184,6 +184,9 @@ if __name__ == '__main__':
         rospy.init_node('starting')
         agent_id = int(sys.argv[2])
         movebase_client(agent_id,-5,-2)
+    elif exec_mode == 'dirt':
+        rospy.init_node('dirt')
+        generate_dirt()
     else:
         print("Code not found")
         raise NotImplementedError

@@ -15,10 +15,8 @@ VISITED_COLOR = 50
 class VisitedMapModule(Module):
     def __init__(self, agent_id):
         super(VisitedMapModule, self).__init__(agent_id, 'VisitedMapModule')
-
         self.cli_cmds = ['v', 'visited_map']
-        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
-        self.print_v(self.get_topic('/move_base/local_costmap/footprint'))
+
         self.print_v("Setting up visited map module...")
         map_msg = rospy.wait_for_message(self.get_topic('/map'), OccupancyGrid, timeout=None)
         
@@ -28,15 +26,24 @@ class VisitedMapModule(Module):
         self.map_height = self.visited_map.shape[0] # NOTE - this may be revered, as in map_height=shape[1] etc.
         self.map_width = self.visited_map.shape[1]
         self.map_resolution = map_msg.info.resolution
-        self.map_origin_translation = map_msg.info.pose.position
+        self.map_origin_translation = map_msg.info.origin.position
         self.starting_unexplored = (self.visited_map == 0).sum()
 
         self.percent_array = np.zeros((1,2))
         self.start_time = rospy.get_rostime().secs
+
+        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
+
         self.print_v("Finished setting up visited map module")
 
     def cli(self, cmd):
+        fig = plt.figure()
+        fig.set_size_inches(16, 12)
+        fig.add_subplot(1, 2, 1)
+        plt.title("Time:"+str(rospy.get_rostime().secs - self.start_time) + '[s], ' + format(self.percentage,'.2f') + '%. R='+str(RADIUS))
         plt.imshow(self.visited_map, cmap='gray')
+        fig.add_subplot(1, 2, 2)
+        plt.plot(self.percent_array[:,0], self.percent_array[:,1])        
         plt.show()
 
     def footprint_to_map(self, x, y):
