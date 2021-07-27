@@ -19,36 +19,37 @@ class BaseCollectorModule(Module):
         self.dirt_distances = get_dirt_distances(self.agent_id)
         self.print_v("Finished init")
 
-        import matplotlib.pyplot as plt
-        import numpy as np
+        # import matplotlib.pyplot as plt
+        # import numpy as np
         
-        map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
-        visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
-        visited_map = np.fliplr(np.rot90(visited_map))
+        # map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
+        # visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
+        # visited_map = np.fliplr(np.rot90(visited_map))
 
-        map_resolution = map_msg.info.resolution
-        map_origin_translation = map_msg.info.origin.position
-        map_height = visited_map.shape[0]
-        map_width = visited_map.shape[1]
-        from scipy.ndimage.filters import gaussian_filter
+        # map_resolution = map_msg.info.resolution
+        # map_origin_translation = map_msg.info.origin.position
+        # map_height = visited_map.shape[0]
+        # map_width = visited_map.shape[1]
+        # from scipy.ndimage.filters import gaussian_filter
 
-        visited_map = gaussian_filter(visited_map, sigma=7)
-        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
-        dirt_list = np.array(eval(dirt.data))
-        plt.imshow(visited_map, cmap='gray')
-        xs = map(lambda x: map_width - int((x - map_origin_translation.x) / map_resolution), dirt_list[:,0])
-        ys = map(lambda y: map_height - int((y - map_origin_translation.y) / map_resolution) , dirt_list[:,1])
-        plt.scatter(xs, ys, c='w')
-        are_zero = []
-        for k in self.dirt_distances.keys():
-            if(self.dirt_distances[k] == 0):
-                x = map_width - int((k[0] - map_origin_translation.x) / map_resolution)
-                y = map_height - int((k[1] - map_origin_translation.y) / map_resolution)
-                are_zero.append([x,y])
+        # visited_map = gaussian_filter(visited_map, sigma=7)
+        # dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        # dirt_list = np.array(eval(dirt.data))
+        # plt.imshow(visited_map, cmap='gray')
+        # xs = map(lambda x: map_width - int((x - map_origin_translation.x) / map_resolution), dirt_list[:,1])
+        # ys = map(lambda y: map_height - int((y - map_origin_translation.y) / map_resolution) , dirt_list[:,0])
+        # plt.scatter(xs, ys, c='w')
+        # are_zero = []
+        # for k in self.dirt_distances.keys():
+        #     if(self.dirt_distances[k] == 0):
+        #         x = map_width - int((k[1] - map_origin_translation.x) / map_resolution)
+        #         y = map_height - int((k[0] - map_origin_translation.y) / map_resolution)
+        #         are_zero.append([x,y])
 
-        are_zero = np.array(are_zero)
-        plt.scatter(are_zero[:,0], are_zero[:,1], c='r')
-        plt.show()
+        # are_zero = np.array(are_zero)
+        # if(are_zero):
+        #     plt.scatter(are_zero[:,0], are_zero[:,1], c='r')
+        # plt.show()
 
     def update(self): 
         self.print_v("in update")

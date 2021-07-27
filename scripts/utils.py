@@ -60,6 +60,8 @@ def get_dirt_distances(agent_id):
     return lengths
     
 def poses_to_length(poses_list):
+    
+    print("poses len:" + str(len(poses_list)))
 
     length = 0
     for i in range(len(poses_list) - 1):
@@ -113,8 +115,8 @@ def generate_dirt():
     plt.imshow(visited_map, cmap='gray')
     plt.scatter(indices[1][sampled_list], indices[0][sampled_list], c='w')
     plt.show()
-    xs = map(lambda x: round(((map_height - x) * map_resolution) + map_origin_translation.x ,2) ,indices[0][sampled_list])
-    ys = map(lambda y: round(((map_width  - y) * map_resolution) + map_origin_translation.y ,2) ,indices[1][sampled_list])
+    xs = map(lambda x: round(((map_height - x) * map_resolution) + map_origin_translation.x ,2) ,indices[1][sampled_list])
+    ys = map(lambda y: round(((map_width  - y) * map_resolution) + map_origin_translation.y ,2) ,indices[0][sampled_list])
     print(list(zip(ys, xs)))
 
 def print_position(agent_id):
