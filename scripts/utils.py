@@ -19,6 +19,19 @@ def get_position(agent_id):
         return
     return current_position
 
+def get_dirt_adjacency_mat_distances(agent_id):
+    try:
+        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        dirt_list = eval(dirt.data)
+    except rospy.ROSException:
+        return
+
+    current_position = get_position(agent_id)
+
+    dirt_list.appen([current_position.x, current_position.y])
+
+
+
 def get_dirt_distances(agent_id):
     try:
         dirt = rospy.wait_for_message("/dirt",msg.String, 1)
@@ -61,7 +74,7 @@ def get_dirt_distances(agent_id):
     
 def poses_to_length(poses_list):
     
-    print("poses len:" + str(len(poses_list)))
+    # print("poses len:" + str(len(poses_list)))
 
     length = 0
     for i in range(len(poses_list) - 1):

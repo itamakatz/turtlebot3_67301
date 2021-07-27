@@ -7,16 +7,16 @@ from std_msgs import msg
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from modular import Module
 from geometry_msgs.msg import PoseWithCovarianceStamped
-
-from utils import movebase_client, get_dirt_distances
 from nav_msgs.msg import OccupancyGrid
+
+from utils import movebase_client, get_dirt_distances, get_position
 
 class BaseCollectorModule(Module):
 
     def __init__(self, agent_id):
         super(BaseCollectorModule, self).__init__(agent_id, 'BaseCollectorModule')
         self.cli_cmds = []
-        self.dirt_distances = get_dirt_distances(self.agent_id)
+        # self.dirt_distances = get_dirt_distances(self.agent_id)
         self.print_v("Finished init")
 
         # import matplotlib.pyplot as plt
@@ -53,32 +53,39 @@ class BaseCollectorModule(Module):
 
     def update(self): 
         self.print_v("in update")
-        location = rospy.wait_for_message(self.get_topic('/amcl_pose'), PoseWithCovarianceStamped, 1)
-        p = location.pose.pose.position
-        self.print_v("Current location: " + str(p.x) + "," + str(p.y))
+        current_p = get_position(self.agent_id)
+        self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
 
-        try:
-            dirt = rospy.wait_for_message("/dirt",msg.String, 1)
-            dirt_list = eval(dirt.data)
-            self.print_v("received: " + dirt.data)
-        except rospy.ROSException:
-            self.print_v("no dirt left")
+        # try:
+        #     dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        #     dirt_list = eval(dirt.data)
+        #     self.print_v("received: " + dirt.data)
+        # except rospy.ROSException:
+        #     self.print_v("no dirt left")
+        #     return
+
+        # if(len(dirt_list) == 0):
+        #     self.print_v("no dirt left")
+        #     return
+
+        # updated_dirt_distances = {}
+        # for dirt in dirt_list:
+        #     updated_dirt_distances[(dirt[0], dirt[1])] = self.dirt_distances[(dirt[0], dirt[1])]
+        
+        updated_dirt_distances = get_dirt_distances(self.agent_id)
+        # print(len(updated_dirt_distances))
+
+        if(not updated_dirt_distances):
+            print("no more dirt")
             return
 
-        if(len(dirt_list) == 0):
-            self.print_v("no dirt left")
-            return
-
-        updated_dirt_distances = {}
-        for dirt in dirt_list:
-            updated_dirt_distances[(dirt[0], dirt[1])] = self.dirt_distances[(dirt[0], dirt[1])]
         closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
-        self.print_v(updated_dirt_distances)
-        self.print_v("")
-        self.print_v(closest_dirt)
-        self.print_v(self.dirt_distances[closest_dirt])
-        self.print_v(updated_dirt_distances[closest_dirt])
-        self.print_v("")
+        # self.print_v(updated_dirt_distances)
+        # self.print_v("")
+        # self.print_v(closest_dirt)
+        # # self.print_v(self.dirt_distances[closest_dirt])
+        # self.print_v(updated_dirt_distances[closest_dirt])
+        # self.print_v("")
         # self.print_v("next dirt location: " + str(dirt_list[0][0]) + "," + str(dirt_list[0][1]))
 
         movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1]) 

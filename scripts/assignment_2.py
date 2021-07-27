@@ -21,7 +21,7 @@ from matplotlib.colors import ListedColormap
 from sklearn.neighbors import NearestNeighbors
 from sklearn.neighbors import kneighbors_graph
 
-from utils import get_position, get_dirt_distances, generate_dirt
+from utils import get_position, get_dirt_distances, generate_dirt, movebase_client
 
 COSTMAP_THRESHOLD = 0.25
 PIXEL_THRESHOLD = 20
@@ -55,23 +55,43 @@ class AdvancedCollectorModule(Module):
         lengths2 = get_dirt_distances(self.get_other_id())
         self.print_v(lengths2)
 
-    def update(self): pass
+    def update(self): 
+        self.print_v("in update")
+        current_p = get_position(agent_id)
+        self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
 
 def vacuum_cleaning(agent_id):
        
     print('start cleaning')
-    # if(agent_id == 1):
-    #     robot = Modular([
-    #         AdvancedCollectorModule(agent_id)
-    #     ])
-    # if(agent_id == 0):
     robot = Modular([
         BaseCollectorModule(agent_id)
     ])
+    
+    # if(agent_id == 1):
+    #     robot = Modular([
+    #         BaseCollectorModule(agent_id)
+
+    #     ])
+    # if(agent_id == 0):
+    #     robot = Modular([
+    #         # AdvancedCollectorModule(agent_id)
+    #         BaseCollectorModule(agent_id)
+    #     ])
     # else:
     #     raise NotImplementedError
 
-    print("Running modular robot " + str(agent_id))
+    # robot1 = Modular([
+    #     BaseCollectorModule(0),
+    # ])
+    # robot2 = Modular([
+    #     BaseCollectorModule(1),
+    # ])
+
+    # while(not rospy.is_shutdown()):
+    #     robot1.run_single_round()
+    #     robot2.run_single_round()
+
+    # print("Running modular robot " + str(agent_id))
     robot.run()
 
 def inspection():
@@ -140,8 +160,7 @@ def count_shapes(costmap1, costmap2):
 if __name__ == '__main__':
 
     # Initializes a rospy node to let the SimpleActionClient publish and subscribe
-    rospy.init_node('assignment_2')
-
+    
     exec_mode = sys.argv[1] 
     print('exec_mode:' + exec_mode)        
     # id = int(sys.argv[2])
@@ -155,10 +174,16 @@ if __name__ == '__main__':
 
     if exec_mode == 'cleaning':        
         agent_id = int(sys.argv[2])
+        rospy.init_node('assignment_2.%d'%agent_id)
         vacuum_cleaning(agent_id)
         print('agent id:' + sys.argv[2])        
     elif exec_mode == 'inspection':
+        rospy.init_node('assignment_2')
         inspection()
+    elif exec_mode == 'start':
+        rospy.init_node('starting')
+        agent_id = int(sys.argv[2])
+        movebase_client(agent_id,-5,-2)
     else:
         print("Code not found")
         raise NotImplementedError
