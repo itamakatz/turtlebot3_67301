@@ -2,15 +2,16 @@
 import sys
 import rospy
 import os
+import select
+from collections import defaultdict
 import multi_move_base 
 import actionlib
 from visited_map_module import VisitedMapModule
-from room_inspector_module import RoomInspectorModule
 from std_msgs import msg
 from roomba_module import RoombaModule
 from nav_msgs.msg import OccupancyGrid, MapMetaData
+from geometry_msgs.msg import PolygonStamped
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from modular import Module, Modular
 from count_module import CountModule
 from base_collector_module import BaseCollectorModule
 import numpy as np
@@ -23,11 +24,84 @@ from sklearn.neighbors import kneighbors_graph
 
 from utils import get_position, get_dirt_distances, generate_dirt, movebase_client
 
-COSTMAP_THRESHOLD = 0.25
-PIXEL_THRESHOLD = 20
+# Parameters Optimized for the default balls Gazebo in default map - Needs to be adjusted for different size:
+COSTMAP_THRESHOLD = 0.3
+PIXEL_THRESHOLD = 50
 
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
+
+RADIUS = 5
+VISITED_COLOR = 45
+
+"""
+General Util Code:
+"""
+
+class Module(object):
+
+    def __init__(self, agent_id, name):
+        self.cli_cmds = []
+        self.agent_id = agent_id
+        self.base_topic = '/tb3_' + str(agent_id)
+        self.name = name
+        self.verbose_name = self.name + '.' + str(self.agent_id) + ' | '
+
+    def update(self): return None
+
+    def cli(self, cmd): pass
+
+    def print_v(self, msg, newline = False): 
+        '''verbose print'''
+        if(newline): print(self.verbose_name); print(msg)
+        else: print(self.verbose_name + str(msg))
+    
+    def get_topic(self, topic): 
+        # self.print_v("composed topic: '" + self.base_topic + topic + "'")
+        return self.base_topic + topic
+
+    def get_other_id(self): 
+        '''returns the id of the other agent'''
+        return abs(self.agent_id-1)
+
+class Modular:
+
+    def __init__(self, module_list):
+        self.modules = module_list
+        self.cli_cmds = defaultdict(list)
+        for module in self.modules:
+            for cmd in module.cli_cmds:
+                self.cli_cmds[cmd].append(module)
+           
+    def run(self):
+        # Update the modules
+        while (not rospy.is_shutdown()):
+            self.run_single_round()   
+
+    # Needed for the parallels runs:
+    def run_single_round(self):
+        for module in self.modules: 
+            optional_msg = module.update()
+            if(optional_msg is not None): self.parse_cli(optional_msg)
+
+        # Parse cli commands
+        has_input, _, _ = select.select( [sys.stdin], [], [], 0.1 )
+
+        if (has_input):
+            cli_str = sys.stdin.readline().strip().lower()
+            print("got cli command: '" + cli_str + "'")
+            self.parse_cli(cli_str)
+
+    def parse_cli(self, msg):
+        if msg in ['k', 'kill']: 
+            print("killing program")
+            sys.exit()
+        for module in self.cli_cmds[msg]: 
+            module.cli(msg)
+
+"""
+Code for Cleaning:
+"""
 
 class AdvancedCollectorModule(Module):
 
@@ -104,74 +178,221 @@ def vacuum_cleaning(agent_id):
     # print("Running modular robot " + str(agent_id))
     robot.run()
 
+"""
+Inspection code:
+"""
 def inspection():
-    room_map = make_rooms()
+    inspection_controller = InspectionController()
+    inspection_controller.run()
     print('start inspection')
-    robot1 = Modular([
-        RoomInspectorModule(0, room_map == 1),
-    ])
-    robot2 = Modular([
-        RoomInspectorModule(1, room_map == 2),
-    ])
-    print("Running modular robots ")
-    while(not rospy.is_shutdown()):
-        robot1.run_single_round()
-        robot2.run_single_round()
-        shapes = count_shapes(robot1.modules[0].global_costmap, robot2.modules[0].global_costmap)
-        print("Number of shapes: ", shapes)
 
-def make_rooms():
-    map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
-    map = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0
-    points_x, points_y = np.where(map == False)
-    points = np.dstack([points_x, points_y])[0, :, :]
-    kmeans = KMeans(n_clusters=ROOM_NUMBER, random_state=0).fit(points)
-    
-    coloring = kmeans.predict(points)
-    
-    room_map = np.zeros(map.shape)
+class InspectionController:
+    def __init__(self):
+        self.robot0 = Modular([
+            RoomInspectorModule(0),
+        ])
+        self.robot1 = Modular([
+            RoomInspectorModule(1),
+        ])
 
-    for i in range(points.shape[0]):
-        room_map[points[i, 0], points[i, 1]] = coloring[i] + 1
+        room_allocation = self.make_rooms()
+        self.robot0.modules[0].set_room(self.room_map == room_allocation[0])
+        self.robot1.modules[0].set_room(self.room_map == room_allocation[1])
+        self.shapes = -2 # Default Number
+        print("Inspection Controller setup finished")
 
-    room_map = np.fliplr(np.rot90(room_map))
-    # tell imshow about color map so that only set colors are used
-    # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
-    # plt.show()
-    return room_map
+    def run(self):
+        while(not rospy.is_shutdown()):
+            self.robot0.run_single_round()
+            self.robot1.run_single_round()
+            self.count_shapes()
+            print("Number of shapes: ", self.shapes)
 
-def count_shapes(costmap1, costmap2):
-    CURRENT_COLOR = 25
-    PASSED_COLOR = 50
-    OBS_COLOR = 100
-    # merge the costmaps:
-    costmap = np.maximum(costmap1, costmap2)
-    # print("costmap max is ", np.max(costmap))
-    # print("costmap min is ", np.min(costmap))
-    thre_map = ((costmap.astype(np.float) / 255) > COSTMAP_THRESHOLD).astype(np.float)
-    thre_map = (thre_map*100).astype(np.uint8)
-    # print("threshold max is ", np.max(thre_map))
-    # print("threshold min is ", np.min(thre_map))
-    # plt.imshow(costmap, cmap='gray')
-    # plt.show()
-    # plt.imshow(thre_map, cmap='gray')
-    # plt.show()
-    count = -3 # The first one is the outer walls, two robots
-    # First nonempty index:
-    x_i, y_i = np.where(thre_map == OBS_COLOR)
-    while x_i.shape[0] != 0:
-        x = x_i[0]
-        y = y_i[0]
-        # Fill it
-        floodFill(thre_map, None, (y, x), CURRENT_COLOR)
-        # if we colored more than PIXEL_THRESHOLD pixels add one to the count
-        colored_pixels = (thre_map == CURRENT_COLOR).sum()
-        if colored_pixels > PIXEL_THRESHOLD:
-            count += 1
-        # Return them to a different color
-        thre_map[np.where(thre_map == CURRENT_COLOR)] = PASSED_COLOR
+    def make_rooms(self):
+        map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
+        map = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0
+        points_x, points_y = np.where(map == False)
+        points = np.dstack([points_x, points_y])[0, :, :]
+        kmeans = KMeans(n_clusters=ROOM_NUMBER, random_state=0).fit(points)
+        
+        coloring = kmeans.predict(points)
+        
+        room_map = np.zeros(map.shape)
+
+        for i in range(points.shape[0]):
+            room_map[points[i, 0], points[i, 1]] = coloring[i] + 1
+
+        self.room_map = np.fliplr(np.rot90(room_map))
+        # tell imshow about color map so that only set colors are used
+        # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
+        # plt.show()
+        return self.allocate_rooms()
+
+    def allocate_rooms(self):
+        pos0 = (self.robot0.modules[0].current_x, self.robot0.modules[0].current_y)
+        pos1 = (self.robot1.modules[0].current_x, self.robot1.modules[0].current_y)
+        
+        # Calculate centers of rooms:
+        centers = []
+        for i in range(2):
+            x, y = np.where(self.room_map == i+1) # We skip an index since 0 represents out of area
+            x_com = x.sum() / x.shape[0]
+            y_com = y.sum() / y.shape[0]
+            centers.append((x_com, y_com))
+
+        # L_2^2 Norm:
+        l22 = lambda pos1, pos2: (pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2
+        # print("Centers is ", centers)
+        # print("pos0 is ", pos0)
+        # print("pos1 is ", pos1)
+        if l22(pos0, centers[0]) + l22(pos1, centers[1]) < l22(pos1, centers[0]) + l22(pos0, centers[1]):
+            return {0: 1, 1: 2} # For robot0 room number 1 etc.
+        else: 
+            return {0: 2, 1: 1}
+
+    # Like make_rooms, but from visited maps instead of the regular map
+    def make_dynamic_room(non_visited_map1, non_visited_map2):
+        # Legal non visited
+        pass
+
+    def count_shapes(self):
+        CURRENT_COLOR = 25
+        PASSED_COLOR = 50
+        OBS_COLOR = 100
+        # merge the costmaps:
+        costmap1 = self.robot0.modules[0].global_costmap
+        costmap2 = self.robot1.modules[0].global_costmap
+
+        costmap = np.maximum(costmap1, costmap2)
+        thre_map = ((costmap.astype(np.float) / 255) > COSTMAP_THRESHOLD).astype(np.float)
+        thre_map = (thre_map*100).astype(np.uint8)
+        count = -1 # The first one is the outer walls, two robots
+        # First nonempty index:
         x_i, y_i = np.where(thre_map == OBS_COLOR)
-    return count
+        while x_i.shape[0] != 0:
+            x = x_i[0]
+            y = y_i[0]
+            # Fill it
+            floodFill(thre_map, None, (y, x), CURRENT_COLOR)
+            # if we colored more than PIXEL_THRESHOLD pixels add one to the count
+            colored_pixels = (thre_map == CURRENT_COLOR).sum()
+            if colored_pixels > PIXEL_THRESHOLD:
+                count += 1
+            # Return them to a different color
+            thre_map[np.where(thre_map == CURRENT_COLOR)] = PASSED_COLOR
+            x_i, y_i = np.where(thre_map == OBS_COLOR)
+        if self.shapes != -5 and self.shapes != count:
+            plt.imshow(thre_map, cmap='gray')
+            plt.show()
+        self.shapes = count
+
+class RoomInspectorModule(Module):
+    def __init__(self, agent_id):
+        super(RoomInspectorModule, self).__init__(agent_id, 'RoomInspectorModule')
+
+        self.cli_cmds = ['v', 'visited_map', 'r', 'room']
+        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
+        self.print_v(self.get_topic('/move_base/local_costmap/footprint'))
+        self.print_v("Setting up room inspector module...")
+        map_msg = rospy.wait_for_message(self.get_topic('/map'), OccupancyGrid, timeout=None)
+        self.client = actionlib.SimpleActionClient('/tb3_%d/move_base'%self.agent_id, MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
+        self.client.wait_for_server() # Waits until the action server has started up and started listening for goals.
+        
+        # == init_map == #
+        self.visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
+        self.visited_map = np.fliplr(np.rot90(self.visited_map))
+        self.map_height = self.visited_map.shape[0] # NOTE - this may be revered, as in map_height=shape[1] etc.
+        self.map_width = self.visited_map.shape[1]
+        self.starting_unexplored = (self.visited_map == 0).sum()
+
+        self.percent_array = np.zeros((1,2))
+        self.start_time = rospy.get_rostime().secs
+        self.is_moving = False
+        self.verbose = True
+        self.print_v("Finished setting up room inspector module")
+
+    def set_room(self, room):
+        self.room_map = room
+
+    def update(self):
+        # Update the Costmap:
+        map_msg = rospy.wait_for_message(self.get_topic('/move_base/global_costmap/costmap'), OccupancyGrid, timeout=None)
+        self.global_costmap = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height))    
+        
+        # Handle the moving:
+        if not self.is_moving:
+            self.is_moving = True
+            x, y = self.sample_unvisited_point_in_room()
+            x, y = self.map_to_footprint(x, y)
+            print('Moving to X:', x, 'Y:', y)
+            self.movebase_client(x, y)
+
+    def sample_unvisited_point_in_room(self):
+        x = np.random.  randint(self.map_width)
+        y = np.random.randint(self.map_height)
+        while self.visited_map[y, x] != VISITED_COLOR and self.room_map[y, x] != True:
+            x = np.random.randint(self.map_width)
+            y = np.random.randint(self.map_height)
+        return x, y
+
+    def cli(self, cmd):
+        if cmd in ['v', 'visited_map']:
+            plt.imshow(self.visited_map, cmap='gray')
+            plt.show()
+        if cmd in ['r', 'room']:
+            plt.imshow(self.room_map, cmap='gray')
+            plt.show()
+
+    def footprint_to_map(self, x, y):
+        map_y = self.map_width - int((x + 10) * 20)
+        map_x = self.map_height - int((y + 10) * 20)
+        return (map_x, map_y)
+
+    def map_to_footprint(self, x, y):
+        footprint_y = ((self.map_height - x) / 20) - 10
+        footprint_x = ((self.map_width - y) / 20) - 10
+        return (footprint_x, footprint_y)
+
+    def movebase_client(self, x, y):
+        print("moving to: " + str(x) + "," + str(y))
+        goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
+        goal.target_pose.header.frame_id = "map"
+        goal.target_pose.header.stamp = rospy.Time.now()
+        goal.target_pose.pose.position.x = x
+        goal.target_pose.pose.position.y = y
+        goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
+        self.client.send_goal(goal, done_cb=self.goal_finished) # Sends the goal to the action server.
+        rospy.loginfo("New goal command sent!")
+
+    def goal_finished(self, state, result):
+        """
+        Gets called after the move_base finished, both in case of sucess and failure
+        """
+        if self.verbose:
+            rospy.loginfo("Action server is done. State: %s, result: %s" % (str(state), str(result)))
+        self.is_moving = False
+
+# Used as a callback:
+def update_position(msg, mod):
+    center_x = sum([p.x for p in msg.polygon.points]) / len(msg.polygon.points)
+    center_y = sum([p.y for p in msg.polygon.points]) / len(msg.polygon.points)
+    
+    x,y = mod.footprint_to_map(center_x,center_y)
+
+    mod.current_x = x
+    mod.current_y = y
+
+    low_x = max(0, x - RADIUS)
+    high_x = min(mod.map_width, x + RADIUS)
+    low_y = max(0, y - RADIUS)
+    high_y = min(mod.map_height, y + RADIUS)
+
+    new_covered = np.zeros_like(mod.visited_map)
+    new_covered[low_y: high_y, low_x: high_x] = VISITED_COLOR
+    mod.visited_map = np.maximum(mod.visited_map, new_covered)
+    unexplored = (mod.visited_map == 0).sum()
+    mod.percentage = (mod.starting_unexplored - unexplored) * 100 / mod.starting_unexplored
+    mod.percent_array = np.append(mod.percent_array, np.array([[rospy.get_rostime().secs - mod.start_time, mod.percentage]]), axis=0)
 
 
 # If the python node is executed as main process (sourced directly)
