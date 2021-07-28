@@ -20,9 +20,12 @@ class BaseCollectorModule(Module):
         updated_dirt_distances = get_dirt_distances(self.agent_id)
 
         if(not updated_dirt_distances and not self.finish):
+            if()
             self.finish = True
             print("no more dirt")
             return 'v'
-
+        elif(not updated_dirt_distances):
+            return
+            
         closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
         movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1]) 
