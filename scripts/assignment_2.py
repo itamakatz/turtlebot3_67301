@@ -31,7 +31,6 @@ PIXEL_THRESHOLD = 20
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
-VEC_EPSILON = 1e-2
 MAX_DIRT_DISTANCE = 2
 class AdvancedCollectorModule(Module):
 
@@ -39,8 +38,8 @@ class AdvancedCollectorModule(Module):
         super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
         self.cli_cmds = []
         self.finish = False
-        self.opponent_vect = None
-        self.opponent_last_position = None
+        # self.opponent_vect = None
+        # self.opponent_last_position = None
         # dirt = rospy.wait_for_message("/dirt",msg.String, 1)
         # dirt_list = np.array(eval(dirt.data))
         # self.print_v(dirt_list,True)
@@ -68,30 +67,31 @@ class AdvancedCollectorModule(Module):
         dirt_distances = get_dirt_distances(self.agent_id)
         opponent_dirt_distances = get_dirt_distances(self.agent_id) # read it here so we dont pick dirt in between giving an error
 
-        if(not dirt_distances and not self.finish):
+        if(not opponent_dirt_distances and not self.finish):
             self.finish = True
             print("no more dirt")
             return 'v'
-        elif(not dirt_distances):
+        elif(not opponent_dirt_distances):
             return
 
-        opponent_current_p = get_position(self.other_agent_id)
+        opponent_p1 = get_position(self.other_agent_id)
+        rospy.sleep(1)
+        opponent_p2 = get_position(self.other_agent_id)
 
-        if(self.opponent_last_position is None):
-            self.opponent_last_position = opponent_current_p
-        else:
-            old_p = self.opponent_last_position
-            self.opponent_last_position = opponent_current_p
-            self.opponent_vect = Point()
-            self.opponent_vect.x -= opponent_current_p.x - old_p.x
-            self.opponent_vect.y -= opponent_current_p.y - old_p.y
+        opponent_vect = Point()
+        opponent_vect.x = opponent_p2.x - opponent_p1.x
+        opponent_vect.y = opponent_p2.y - opponent_p1.y
         
-        if(AdvancedCollectorModule.vec_magnitude(self.opponent_vect) > VEC_EPSILON):
+        self.print_v("opponent_vect: " + str(opponent_vect))
+
+        if(AdvancedCollectorModule.vec_magnitude(opponent_vect) > 0):
             dirt_list = get_dirt_list()
-            dirt_distance_from_line = list(map(lambda dirt: (AdvancedCollectorModule.distance_from_line(opponent_current_p, self.opponent_vect, dirt), dirt),dirt_list))
+            dirt_distance_from_line = list(map(lambda dirt: (AdvancedCollectorModule.distance_from_line(opponent_p1, opponent_p2, dirt), dirt), dirt_list))
+            self.print_v(dirt_distance_from_line, True)
             closest_pair = min(dirt_distance_from_line, key=lambda pair: pair[0])
             if(closest_pair < MAX_DIRT_DISTANCE and dirt_distances(closest_pair[1]) < opponent_dirt_distances(closest_pair[1])):
                 goto_dirt = closest_pair[1]
+                self.print_v("closest dirt to line: (" + str(goto_dirt[0]) + "," + str(goto_dirt[1]) + ")")
             else:
                 goto_dirt = min(dirt_distances, key=dirt_distances.get)
         else:
@@ -105,15 +105,11 @@ class AdvancedCollectorModule(Module):
         return sqrt(vec.x**2 + vec.y**2)
 
     @staticmethod
-    def distance_from_line(origin, vect, point):
-        # a = (vect.y*(point.y-origin.y)+vect.x*(point.x-origin.x))/AdvancedCollectorModule.vec_magnitude(vect)
-        a = (vect.y*(point[1]-origin.y)+vect.x*(point[0]-origin.x))/AdvancedCollectorModule.vec_magnitude(vect)
-        return origin.x+a*vect.x, origin.y+a*vect.y
-    # def distance_from_line(p1, p2, p3):
-    #     dx, dy = p2.x-p1.x, p2.y-p1.y
-    #     det = dx*dx + dy*dy
-    #     a = (dy*(p3.y-p1.y)+dx*(p3.x-p1.x))/det
-    #     return p1.x+a*dx, p1.y+a*dy
+    def distance_from_line(p1, p2, p0):
+        x1, y1 = p1.x, p1.y
+        x2, y2 = p2.x, p2.y
+        x0, y0 = p0[0], p0[1]
+        return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
 
 def vacuum_cleaning(agent_id):
        
