@@ -25,7 +25,8 @@ class Module(object):
         # self.print_v("composed topic: '" + self.base_topic + topic + "'")
         return self.base_topic + topic
 
-    def get_other_id(self): 
+    @property
+    def other_agent_id(self):
         '''returns the id of the other agent'''
         return abs(self.agent_id-1)
 

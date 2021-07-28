@@ -4,6 +4,7 @@ import rospy
 import os
 import multi_move_base 
 import actionlib
+from math import sqrt
 from visited_map_module import VisitedMapModule
 from room_inspector_module import RoomInspectorModule
 from std_msgs import msg
@@ -20,8 +21,9 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from sklearn.neighbors import NearestNeighbors
 from sklearn.neighbors import kneighbors_graph
+from geometry_msgs.msg import Point
 
-from utils import get_position, get_dirt_distances, generate_dirt, movebase_client
+from utils import get_position, get_dirt_distances, generate_dirt, movebase_client, get_dirt_list
 
 COSTMAP_THRESHOLD = 0.25
 PIXEL_THRESHOLD = 20
@@ -29,66 +31,108 @@ PIXEL_THRESHOLD = 20
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
+VEC_EPSILON = 1e-2
+MAX_DIRT_DISTANCE = 2
 class AdvancedCollectorModule(Module):
 
     def __init__(self, agent_id):
         super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
         self.cli_cmds = []
         self.finish = False
-        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
-        dirt_list = np.array(eval(dirt.data))
-        self.print_v(dirt_list,True)
-        # X = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
-        X = np.array([[-1, -1], [3, 2]])
-        nbrs = NearestNeighbors(n_neighbors=len(dirt_list), algorithm='ball_tree').fit(dirt_list)
-        distances, indices = nbrs.kneighbors(X)
-        self.print_v(indices,True)
-        self.print_v(distances,True)
-        self.print_v(nbrs.kneighbors_graph(X).toarray(),True)
+        self.opponent_vect = None
+        self.opponent_last_position = None
+        # dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        # dirt_list = np.array(eval(dirt.data))
+        # self.print_v(dirt_list,True)
+        # # X = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
+        # X = np.array([[-1, -1], [3, 2]])
+        # nbrs = NearestNeighbors(n_neighbors=len(dirt_list), algorithm='ball_tree').fit(dirt_list)
+        # distances, indices = nbrs.kneighbors(X)
+        # self.print_v(indices,True)
+        # self.print_v(distances,True)
+        # self.print_v(nbrs.kneighbors_graph(X).toarray(),True)
         
-        # plt.scatter(dirt_list[:,0], dirt_list[:,1], c='#00FF00', label="dirt_list")
-        # plt.scatter(X[:,0], X[:,1], c='#FFFF00', label="X")
-        # plt.show()
+        # # plt.scatter(dirt_list[:,0], dirt_list[:,1], c='#00FF00', label="dirt_list")
+        # # plt.scatter(X[:,0], X[:,1], c='#FFFF00', label="X")
+        # # plt.show()
 
-        lengths1 = get_dirt_distances(self.agent_id)
-        lengths1
-        self.print_v(lengths1)
-        lengths2 = get_dirt_distances(self.get_other_id())
-        self.print_v(lengths2)
+        # lengths1 = get_dirt_distances(self.agent_id)
+        # lengths1
+        # self.print_v(lengths1)
+        # lengths2 = get_dirt_distances(self.other_agent_id)
+        # self.print_v(lengths2)
 
     def update(self): 
         current_p = get_position(self.agent_id)
         self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
-        updated_dirt_distances = get_dirt_distances(self.agent_id)
+        dirt_distances = get_dirt_distances(self.agent_id)
+        opponent_dirt_distances = get_dirt_distances(self.agent_id) # read it here so we dont pick dirt in between giving an error
 
-        if(not updated_dirt_distances and not self.finish):
+        if(not dirt_distances and not self.finish):
             self.finish = True
             print("no more dirt")
             return 'v'
+        elif(not dirt_distances):
+            return
 
-        closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
-        movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1])         
+        opponent_current_p = get_position(self.other_agent_id)
+
+        if(self.opponent_last_position is None):
+            self.opponent_last_position = opponent_current_p
+        else:
+            old_p = self.opponent_last_position
+            self.opponent_last_position = opponent_current_p
+            self.opponent_vect = Point()
+            self.opponent_vect.x -= opponent_current_p.x - old_p.x
+            self.opponent_vect.y -= opponent_current_p.y - old_p.y
+        
+        if(AdvancedCollectorModule.vec_magnitude(self.opponent_vect) > VEC_EPSILON):
+            dirt_list = get_dirt_list()
+            dirt_distance_from_line = list(map(lambda dirt: (AdvancedCollectorModule.distance_from_line(opponent_current_p, self.opponent_vect, dirt), dirt),dirt_list))
+            closest_pair = min(dirt_distance_from_line, key=lambda pair: pair[0])
+            if(closest_pair < MAX_DIRT_DISTANCE and dirt_distances(closest_pair[1]) < opponent_dirt_distances(closest_pair[1])):
+                goto_dirt = closest_pair[1]
+            else:
+                goto_dirt = min(dirt_distances, key=dirt_distances.get)
+        else:
+            goto_dirt = min(dirt_distances, key=dirt_distances.get)                
+
+        movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
+
+    @staticmethod
+    def vec_magnitude(vec): 
+        if(vec is None): return 0
+        return sqrt(vec.x**2 + vec.y**2)
+
+    @staticmethod
+    def distance_from_line(origin, vect, point):
+        # a = (vect.y*(point.y-origin.y)+vect.x*(point.x-origin.x))/AdvancedCollectorModule.vec_magnitude(vect)
+        a = (vect.y*(point[1]-origin.y)+vect.x*(point[0]-origin.x))/AdvancedCollectorModule.vec_magnitude(vect)
+        return origin.x+a*vect.x, origin.y+a*vect.y
+    # def distance_from_line(p1, p2, p3):
+    #     dx, dy = p2.x-p1.x, p2.y-p1.y
+    #     det = dx*dx + dy*dy
+    #     a = (dy*(p3.y-p1.y)+dx*(p3.x-p1.x))/det
+    #     return p1.x+a*dx, p1.y+a*dy
 
 def vacuum_cleaning(agent_id):
        
     print('start cleaning')
-    robot = Modular([
-        BaseCollectorModule(agent_id),
-        VisitedMapModule(agent_id)
-    ])
+    # robot = Modular([
+    #     BaseCollectorModule(agent_id),
+    #     # VisitedMapModule(agent_id)
+    # ])
     
-    # if(agent_id == 1):
-    #     robot = Modular([
-    #         BaseCollectorModule(agent_id)
-
-    #     ])
-    # if(agent_id == 0):
-    #     robot = Modular([
-    #         # AdvancedCollectorModule(agent_id)
-    #         BaseCollectorModule(agent_id)
-    #     ])
-    # else:
-    #     raise NotImplementedError
+    if(agent_id == 1):
+        robot = Modular([
+            BaseCollectorModule(agent_id)
+        ])
+    elif(agent_id == 0):
+        robot = Modular([
+            AdvancedCollectorModule(agent_id)
+        ])
+    else:
+        raise NotImplementedError
 
     # robot1 = Modular([
     #     BaseCollectorModule(0),

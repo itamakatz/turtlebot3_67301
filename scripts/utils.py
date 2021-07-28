@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from std_msgs import msg
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, Point
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 import nav_msgs
@@ -30,14 +30,18 @@ def get_dirt_adjacency_mat_distances(agent_id):
 
     dirt_list.appen([current_position.x, current_position.y])
 
-
-
-def get_dirt_distances(agent_id):
+def get_dirt_list():
     try:
         dirt = rospy.wait_for_message("/dirt",msg.String, 1)
         dirt_list = eval(dirt.data)
+        return dirt_list
     except rospy.ROSException:
-        return
+        rospy.logerr("could not read dirt")
+        return []
+
+def get_dirt_distances(agent_id):
+
+    dirt_list = get_dirt_list()
 
     current_position = get_position(agent_id)
 
