@@ -6,6 +6,12 @@
 # - !!python/tuple [-1.0, -2.3]
 # radius: 0.5
 
+# number_agents: 2
+# pieces:
+# - !!python/tuple [-2.0, -1.0]
+# - !!python/tuple [-3.0, -4.0]
+# radius: 0.5
+
 number_agents: 2
 pieces:
 - !!python/tuple [-2.8, -3.05]
