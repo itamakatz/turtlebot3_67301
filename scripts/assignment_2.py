@@ -219,7 +219,7 @@ def get_dirt_angles(agent_id, dirt_list):
         if(true_angle > math.pi): 
             true_angle = true_angle - 2*math.pi
         # true_angle = abs(true_angle-2*math.pi) - math.pi
-        angles[(dirt[0], dirt[1])] = (origin_angle, current_orientation_radian, true_angle)
+        angles[(dirt[0], dirt[1])] = true_angle
 
     return angles
 
@@ -232,7 +232,7 @@ def distance_from_line(p1, vec, p0):
     x0, y0 = p0[0], p0[1]
     return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
 
-def calc_potentioal(distance): return distance**-2
+def calc_potential(distance): return distance**-2
 
 def update_adversial_position(msg, self):
     last_p = self.opponent_current_p
@@ -275,8 +275,6 @@ class AdvancedCollectorModule(Module):
 
         self_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
 
-        # if(self.new_opponent_data == True or (self.opponent_vect_angle is not None and self.opponent_vect is not None)):
-        self.print_v("self.new_opponent_data: " + str(self.new_opponent_data))
         if(self.new_opponent_data == True):    
 
             self.new_opponent_data = False 
@@ -290,27 +288,28 @@ class AdvancedCollectorModule(Module):
             dirt_distance_from_line = list(map(lambda dirt: (dirt, distance_from_line(\
                 [self.opponent_current_p.x, self.opponent_current_p.y], [self.opponent_vect.x, self.opponent_vect.y], dirt)), feasible_dirt_list))
             
-            potential_dirt_distances = dict(map(lambda pair: (pair[0], calc_potentioal(pair[1])), opponent_dirt_distances))
-            potential_dirt_angles = dict(map(lambda pair: (pair[0], 1/(np.sign(self.opponent_vect_angle)*pair[0])), opponent_dirt_angles))
-            potential_from_line = dict(map(lambda pair: (pair[0], calc_potentioal(pair[1])), dirt_distance_from_line))
+            potential_dirt_distances = dict(map(lambda pair: (pair[0], calc_potential(pair[1])), opponent_dirt_distances))
+            potential_dirt_angles = dict(map(lambda dirt: (dirt, 1/(np.sign(self.opponent_vect_angle)*opponent_dirt_angles[dirt])), opponent_dirt_angles))
+            potential_from_line = dict(map(lambda pair: (pair[0], calc_potential(pair[1])), dirt_distance_from_line))
 
-            overall_potential = []
-            for dirt in range(len(feasible_dirt_list)):
+            overall_potential = {}
+            for dirt in feasible_dirt_list:
                 weight = potential_dirt_distances[dirt]*potential_dirt_angles[dirt]*potential_from_line[dirt]
-                overall_potential.append((dirt, weight))
-            
-            print("\n\n")
-            print("potential_dirt_distances")
-            print(potential_dirt_distances)
-            print("--------------------------------\npotential_dirt_angles")
-            print(potential_dirt_angles)
-            print("--------------------------------\npotential_from_line")
-            print(potential_from_line)
-            print("--------------------------------\noverall_potential")
-            print(overall_potential)
-            print("\n\n")
+                overall_potential[dirt] = weight
+
+            # print("\n\n")
+            # print("potential_dirt_distances")
+            # print(potential_dirt_distances)
+            # print("--------------------------------\npotential_dirt_angles")
+            # print(potential_dirt_angles)
+            # print("--------------------------------\npotential_from_line")
+            # print(potential_from_line)
+            # print("--------------------------------\noverall_potential")       
+            # print(overall_potential)
+            # print("\n\n")
 
             if(overall_potential):
+                # min since the calculation was done for the inverse 
                 goto_dirt = min(overall_potential, key=overall_potential.get)
                 movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
                 return
