@@ -33,7 +33,7 @@ PIXEL_THRESHOLD = 50
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
-MAX_DIRT_DISTANCE = 2
+MIN_VECTOR_MAGNITUDE = 1e-2
 RADIUS = 5
 VISITED_COLOR = 45
 
@@ -174,9 +174,9 @@ def poses_to_length(poses_list):
         length += np.sqrt(np.power((position_b_x - position_a_x), 2) + np.power((position_b_y- position_a_y), 2))
     return length    
 
-def movebase_client(agent_id,x,y):
+def movebase_client(agent_id,x,y,verbose = True):
 
-    print("moving to: " + str(x) + "," + str(y))
+    if(verbose): print("moving to: " + str(x) + "," + str(y))
 
     client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
     client.wait_for_server() # Waits until the action server has started up and started listening for goals.
@@ -188,8 +188,9 @@ def movebase_client(agent_id,x,y):
     goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
     client.send_goal(goal) # Sends the goal to the action server.
     # rospy.loginfo("New goal command received!")
+    # wait = client.wait_for_result(rospy.Duration(1)) # Waits for the server to finish performing the action.
     wait = client.wait_for_result() # Waits for the server to finish performing the action.
-   
+
     if not wait:
         # If the result doesn't arrive, assume the Server is not available
         rospy.logerr("Action server not available!")
@@ -275,7 +276,7 @@ class AdvancedCollectorModule(Module):
 
         self_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
 
-        if(self.new_opponent_data == True):    
+        if(self.new_opponent_data == True and sqrt(self.opponent_vect.x**2+self.opponent_vect.y**2) > MIN_VECTOR_MAGNITUDE):
 
             self.new_opponent_data = False 
             
@@ -311,8 +312,13 @@ class AdvancedCollectorModule(Module):
             if(overall_potential):
                 # min since the calculation was done for the inverse 
                 goto_dirt = min(overall_potential, key=overall_potential.get)
-                movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
-                return
+                # recall that self_dirt_distances[dirt] < opponent_dirt_distances[dirt]
+                p = random.random()
+                print("p: " + str(p) +". threshold: " + str((1-self_dirt_distances[dirt] / opponent_dirt_distances[dirt])))
+                if((1-self_dirt_distances[dirt] / opponent_dirt_distances[dirt]) > p):
+                    self.print_v("mooving to: " + str(goto_dirt) +" instead of: " + str(min(self_dirt_distances, key=self_dirt_distances.get)))
+                    movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1], False)
+                    return
 
         goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
         movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
