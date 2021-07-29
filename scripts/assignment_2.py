@@ -1,30 +1,30 @@
 #!/usr/bin/env python
 import sys
-import rospy
-import os
 import select
-from collections import defaultdict
-import multi_move_base 
+import rospy
+import random
+import os
+import numpy as np
+import nav_msgs
+import matplotlib.pyplot as plt
+import math
 import actionlib
-from math import sqrt
 from visited_map_module import VisitedMapModule
 from std_msgs import msg
+from sklearn.neighbors import kneighbors_graph
+from sklearn.neighbors import NearestNeighbors
+from sklearn.cluster import KMeans
 from roomba_module import RoombaModule
 from nav_msgs.msg import OccupancyGrid, MapMetaData
-from geometry_msgs.msg import PolygonStamped
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from count_module import CountModule
-from base_collector_module import BaseCollectorModule
-import numpy as np
-from sklearn.cluster import KMeans
-from cv2 import floodFill
-import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-from sklearn.neighbors import NearestNeighbors
-from sklearn.neighbors import kneighbors_graph
-from geometry_msgs.msg import Point
-
-from utils import get_position, get_dirt_distances, generate_dirt, movebase_client, get_dirt_list
+from math import sqrt
+from geometry_msgs.msg import PoseWithCovarianceStamped, Point
+from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PolygonStamped
+from cv2 import floodFill
+from count_module import CountModule
+from collections import defaultdict
 
 # Parameters Optimized for the default balls Gazebo in default map - Needs to be adjusted for different size:
 COSTMAP_THRESHOLD = 0.3
@@ -63,7 +63,8 @@ class Module(object):
         # self.print_v("composed topic: '" + self.base_topic + topic + "'")
         return self.base_topic + topic
 
-    def get_other_id(self): 
+    @property
+    def other_agent_id(self):
         '''returns the id of the other agent'''
         return abs(self.agent_id-1)
 
@@ -102,9 +103,146 @@ class Modular:
         for module in self.cli_cmds[msg]: 
             module.cli(msg)
 
-"""
-Code for Cleaning:
-"""
+
+def get_position(agent_id):
+    try:
+        current_location = rospy.wait_for_message('/tb3_%d/amcl_pose'%agent_id, PoseWithCovarianceStamped, 1)
+        return current_location.pose.pose.position
+    except rospy.ROSException:
+        rospy.logerr("waiting for amcl_pose failed.")
+        return
+
+def get_dirt_list():
+    try:
+        dirt = rospy.wait_for_message("/dirt",msg.String, 1)
+        dirt_list = eval(dirt.data)
+        return dirt_list
+    except rospy.ROSException:
+        rospy.logerr("could not read dirt")
+        return []
+
+def get_dirt_distances(agent_id, dirt_list):
+
+    current_position = get_position(agent_id)
+
+    lengths = {}
+    for dirt in dirt_list:
+
+        start = PoseStamped()
+        start.header.seq = 0
+        start.header.frame_id = "/tb3_%d/map"%agent_id
+        start.header.stamp = rospy.Time(0)
+        start.pose.position.x = current_position.x
+        start.pose.position.y = current_position.y
+
+        Goal = PoseStamped()
+        Goal.header.seq = 0
+        Goal.header.frame_id = "/tb3_%d/map"%agent_id
+        Goal.header.stamp = rospy.Time(0)
+        Goal.pose.position.x = dirt[0]
+        Goal.pose.position.y = dirt[1]
+
+        import nav_msgs.srv as srv
+        req = srv.GetPlan()
+        # req = nav_msgs.srv.GetPlan()
+        req.start = start
+        req.goal = Goal
+        req.tolerance = .5
+        # req.tolerance = 2
+        
+        get_plan = rospy.ServiceProxy('/tb3_%d/move_base/make_plan'%agent_id, nav_msgs.srv.GetPlan)
+        resp = get_plan(req.start, req.goal, req.tolerance)
+        
+        length = poses_to_length(resp.plan.poses)
+        lengths[(dirt[0], dirt[1])] = length
+
+    return lengths
+    
+def poses_to_length(poses_list):
+
+    length = 0
+    for i in range(len(poses_list) - 1):
+        position_a_x = poses_list[i].pose.position.x
+        position_b_x = poses_list[i+1].pose.position.x
+        position_a_y = poses_list[i].pose.position.y
+        position_b_y = poses_list[i+1].pose.position.y
+
+        length += np.sqrt(np.power((position_b_x - position_a_x), 2) + np.power((position_b_y- position_a_y), 2))
+    return length    
+
+def movebase_client(agent_id,x,y):
+
+    print("moving to: " + str(x) + "," + str(y))
+
+    client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
+    client.wait_for_server() # Waits until the action server has started up and started listening for goals.
+    goal = MoveBaseGoal() # Creates a new goal with the MoveBaseGoal constructor
+    goal.target_pose.header.frame_id = "map"
+    goal.target_pose.header.stamp = rospy.Time.now()
+    goal.target_pose.pose.position.x = x
+    goal.target_pose.pose.position.y = y
+    goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
+    client.send_goal(goal) # Sends the goal to the action server.
+    rospy.loginfo("New goal command received!")
+    wait = client.wait_for_result() # Waits for the server to finish performing the action.
+   
+    if not wait:
+        # If the result doesn't arrive, assume the Server is not available
+        rospy.logerr("Action server not available!")
+        rospy.signal_shutdown("Action server not available!")
+    else:
+        print("finished!")
+        return client.get_result()   # Result of executing the action
+
+
+def get_dirt_angles(agent_id, dirt_list):
+
+    try:
+        current_pose = rospy.wait_for_message('/tb3_%d/amcl_pose'%agent_id, PoseWithCovarianceStamped, 1)
+        current_position = current_pose.pose.pose.position
+        current_orientation_radian = np.arccos(current_pose.pose.pose.orientation.z)*2
+    except rospy.ROSException:
+        rospy.logerr("waiting for amcl_pose failed.")
+
+    current_position = get_position(agent_id)
+
+    angles = {}
+    for dirt in dirt_list:
+        origin_angle = angle_between_vectors([0,1], [dirt[0] - current_position.x,dirt[1] - current_position.y])
+        true_angle = origin_angle - current_orientation_radian
+        if(true_angle < 0): 
+            true_angle += 2*math.pi
+        if(true_angle > math.pi): 
+            true_angle = true_angle - 2*math.pi
+        # true_angle = abs(true_angle-2*math.pi) - math.pi
+        angles[(dirt[0], dirt[1])] = (origin_angle, current_orientation_radian, true_angle)
+
+    return angles
+
+def angle_between_vectors(v1, v2):
+    return np.math.atan2(np.linalg.det([v1,v2]),np.dot(v1,v2)) + math.pi
+
+def distance_from_line(p1, vec, p0):
+    x1, y1 = p1.x, p1.y
+    x2, y2 = p1.x - vec.x, p1.y - vec.y
+    x0, y0 = p0[0], p0[1]
+    return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
+
+def calc_potentioal(distance): return distance**-2
+
+def update_adversial_position(msg, self):
+    last_p = self.opponent_current_p
+    self.opponent_current_p = msg.pose.pose.position
+    if(last_p is not None):
+        opponent_new_vect = Point()
+        opponent_new_vect.x = self.opponent_current_p.x - last_p.x
+        opponent_new_vect.y = self.opponent_current_p.y - last_p.y
+        if(self.opponent_vect is None):
+            self.opponent_vect = opponent_new_vect 
+        else:
+            self.opponent_vect_angle = angle_between_vectors([self.opponent_vect.x,self.opponent_vect.y], [opponent_new_vect.x, opponent_new_vect.y])
+            self.opponent_vect = opponent_new_vect 
+            self.new_opponent_data = True
 
 class AdvancedCollectorModule(Module):
 
@@ -112,79 +250,100 @@ class AdvancedCollectorModule(Module):
         super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
         self.cli_cmds = []
         self.finish = False
-        # self.opponent_vect = None
-        # self.opponent_last_position = None
-        # dirt = rospy.wait_for_message("/dirt",msg.String, 1)
-        # dirt_list = np.array(eval(dirt.data))
-        # self.print_v(dirt_list,True)
-        # # X = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
-        # X = np.array([[-1, -1], [3, 2]])
-        # nbrs = NearestNeighbors(n_neighbors=len(dirt_list), algorithm='ball_tree').fit(dirt_list)
-        # distances, indices = nbrs.kneighbors(X)
-        # self.print_v(indices,True)
-        # self.print_v(distances,True)
-        # self.print_v(nbrs.kneighbors_graph(X).toarray(),True)
-        
-        # # plt.scatter(dirt_list[:,0], dirt_list[:,1], c='#00FF00', label="dirt_list")
-        # # plt.scatter(X[:,0], X[:,1], c='#FFFF00', label="X")
-        # # plt.show()
-
-        # lengths1 = get_dirt_distances(self.agent_id)
-        # lengths1
-        # self.print_v(lengths1)
-        # lengths2 = get_dirt_distances(self.other_agent_id)
-        # self.print_v(lengths2)
+        self.new_opponent_data = False
+        self.opponent_current_p = None
+        self.opponent_vect = None
+        self.opponent_vect_angle = None
+        self.loc_sub = rospy.Subscriber('/tb3_%d/amcl_pose'%self.other_agent_id, PoseWithCovarianceStamped, update_adversial_position, self)
 
     def update(self): 
         current_p = get_position(self.agent_id)
-        self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
-        dirt_distances = get_dirt_distances(self.agent_id)
-        opponent_dirt_distances = get_dirt_distances(self.agent_id) # read it here so we dont pick dirt in between giving an error
+        # self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
 
-        if(not opponent_dirt_distances and not self.finish):
+        dirt_list = get_dirt_list()
+
+        if(not dirt_list and not self.finish):
             self.finish = True
             print("no more dirt")
             return 'v'
-        elif(not opponent_dirt_distances):
+        elif(not dirt_list):
             return
 
-        opponent_p1 = get_position(self.other_agent_id)
-        rospy.sleep(1)
-        opponent_p2 = get_position(self.other_agent_id)
+        self_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
 
-        opponent_vect = Point()
-        opponent_vect.x = opponent_p2.x - opponent_p1.x
-        opponent_vect.y = opponent_p2.y - opponent_p1.y
+        if(self.new_opponent_data == False):
+            goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
+            movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
+            return
         
-        self.print_v("opponent_vect: " + str(opponent_vect))
+        self.new_opponent_data = False 
 
-        if(AdvancedCollectorModule.vec_magnitude(opponent_vect) > 0):
-            dirt_list = get_dirt_list()
-            dirt_distance_from_line = list(map(lambda dirt: (AdvancedCollectorModule.distance_from_line(opponent_p1, opponent_p2, dirt), dirt), dirt_list))
-            self.print_v(dirt_distance_from_line, True)
-            closest_pair = min(dirt_distance_from_line, key=lambda pair: pair[0])
-            if(closest_pair < MAX_DIRT_DISTANCE and dirt_distances(closest_pair[1]) < opponent_dirt_distances(closest_pair[1])):
-                goto_dirt = closest_pair[1]
-                self.print_v("closest dirt to line: (" + str(goto_dirt[0]) + "," + str(goto_dirt[1]) + ")")
-            else:
-                goto_dirt = min(dirt_distances, key=dirt_distances.get)
-        else:
-            goto_dirt = min(dirt_distances, key=dirt_distances.get)                
+        if(self.opponent_vect_angle is not None and self.opponent_vect is not None):
+            
+            opponent_dirt_distances = get_dirt_distances(self.other_agent_id, dirt_list)
+            feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances(dirt) < opponent_dirt_distances(dirt)]
 
+            opponent_dirt_distances = [opponent_dirt_distances(pair[0]) for pair in feasible_dirt_list]
+            opponent_dirt_angles = get_dirt_angles(self.other_agent_id, feasible_dirt_list)
+            dirt_distance_from_line = list(map(lambda dirt: (dirt, distance_from_line(\
+                [self.opponent_current_p.x, self.opponent_current_p.y], [self.opponent_vect.x, self.opponent_vect.y], dirt)), feasible_dirt_list))
+            
+            potential_dirt_distances = dict(map(lambda pair: (pair[0], calc_potentioal(pair[1])), opponent_dirt_distances))
+            potential_dirt_angles = dict(map(lambda pair: (pair[0], np.sign(pair[0])*opponent_dirt_angles), opponent_dirt_angles))
+            potential_from_line = dict(map(lambda pair: (pair[0], calc_potentioal(pair[1])), dirt_distance_from_line))
+
+            overall_potential = []
+            for dirt in range(leng(feasible_dirt_list)):
+                weight = potential_dirt_distances(dirt)*potential_dirt_angles(dirt)*potential_from_line(dirt)
+                overall_potential.append((dirt, weight))
+            
+            print("\n\n")
+            print("potential_dirt_distances")
+            print(potential_dirt_distances)
+            print("--------------------------------\npotential_dirt_angles")
+            print(potential_dirt_angles)
+            print("--------------------------------\npotential_from_line")
+            print(potential_from_line)
+            print("--------------------------------\noverall_potential")
+            print(overall_potential)
+            print("\n\n")
+
+            if(not overall_potential):
+                goto_dirt = max(overall_potential, key=self_dirt_distances.get)
+                movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
+                return
+
+        goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
         movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
 
-    @staticmethod
-    def vec_magnitude(vec): 
-        if(vec is None): return 0
-        return sqrt(vec.x**2 + vec.y**2)
+class BaseCollectorModule(Module):
 
-    @staticmethod
-    def distance_from_line(p1, p2, p0):
-        x1, y1 = p1.x, p1.y
-        x2, y2 = p2.x, p2.y
-        x0, y0 = p0[0], p0[1]
-        return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
+    def __init__(self, agent_id):
+        super(BaseCollectorModule, self).__init__(agent_id, 'BaseCollectorModule')
+        self.cli_cmds = []
+        self.print_v("Finished init")
+        self.finish = False
 
+    def update(self):
+        current_p = get_position(self.agent_id)
+        # self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
+
+        dirt_list = get_dirt_list()
+
+        if(not dirt_list and not self.finish):
+            self.finish = True
+            print("no more dirt")
+            return 'v'
+        elif(not dirt_list):
+            return
+
+        updated_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
+        closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
+        movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1]) 
+
+"""
+Code for Cleaning:
+"""
 def vacuum_cleaning(agent_id):
        
     print('start cleaning')
@@ -193,13 +352,13 @@ def vacuum_cleaning(agent_id):
     #     # VisitedMapModule(agent_id)
     # ])
     
-    if(agent_id == 1):
-        robot = Modular([
-            BaseCollectorModule(agent_id)
-        ])
-    elif(agent_id == 0):
+    if(agent_id == 0):
         robot = Modular([
             AdvancedCollectorModule(agent_id)
+        ])
+    elif(agent_id == 1):
+        robot = Modular([
+            BaseCollectorModule(agent_id)
         ])
     else:
         raise NotImplementedError
