@@ -393,6 +393,10 @@ def inspection():
     print('start inspection')
 
 class InspectionController:
+    """
+    The controller that runs the robots, allocate the rooms
+    and uses their data the count the shapes
+    """
     def __init__(self):
         self.robot0 = Modular([
             RoomInspectorModule(0),
@@ -400,7 +404,7 @@ class InspectionController:
         self.robot1 = Modular([
             RoomInspectorModule(1),
         ])
-
+        # Initial room allocation:
         room_allocation = self.make_rooms()
         self.robot0.modules[0].set_room(self.room_map == room_allocation[0])
         self.robot1.modules[0].set_room(self.room_map == room_allocation[1])
@@ -413,8 +417,16 @@ class InspectionController:
             self.robot1.run_single_round()
             self.count_shapes()
             print("Number of shapes: ", self.shapes)
+            # Dymanic Area Allocation:
+            room_allocation = self.dynamic_room()
+            self.robot0.modules[0].set_room(self.room_map == room_allocation[0])
+            self.robot1.modules[0].set_room(self.room_map == room_allocation[1])
+
 
     def make_rooms(self):
+        """ Makes room using KMeans to ensure rooms are as compact
+        as possible. This is the methods that calles on initialization (but not while running).
+        """
         map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
         map = np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0
         points_x, points_y = np.where(map == False)
@@ -435,6 +447,8 @@ class InspectionController:
         return self.allocate_rooms()
 
     def allocate_rooms(self):
+        """ Given rooms, send each robot to closest room
+        """
         pos0 = (self.robot0.modules[0].current_x, self.robot0.modules[0].current_y)
         pos1 = (self.robot1.modules[0].current_x, self.robot1.modules[0].current_y)
         
@@ -456,12 +470,40 @@ class InspectionController:
         else: 
             return {0: 2, 1: 1}
 
-    # Like make_rooms, but from visited maps instead of the regular map
-    def make_dynamic_room(non_visited_map1, non_visited_map2):
-        # Legal non visited
-        pass
+    # Like make_rooms, but from visited maps instead of the regular map,
+    # And base the rooms around the robots
+    def dynamic_room(self):
+        """ Makes room using KMeans ONLY FROM UNVISITED AREAS.
+        This is the methods that called on initialization (but not while running).
+        """
+        unvisited0 = (self.robot0.modules[0].visited_map == 0)
+        unvisited1 = (self.robot1.modules[0].visited_map == 0)
+        unvisited = unvisited0 & unvisited1 # Element-wise AND
+
+        points_x, points_y = np.where(unvisited == True)
+        points = np.dstack([points_x, points_y])[0, :, :]
+        kmeans = KMeans(n_clusters=ROOM_NUMBER, random_state=0).fit(points)
+        
+        coloring = kmeans.predict(points)
+        
+        room_map = np.zeros(unvisited.shape)
+
+        for i in range(points.shape[0]):
+            room_map[points[i, 0], points[i, 1]] = coloring[i] + 1
+
+        self.room_map = np.fliplr(np.rot90(room_map))
+        # tell imshow about color map so that only set colors are used
+        # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
+        # plt.show()
+        return self.allocate_rooms()
 
     def count_shapes(self):
+        """
+        Counting the shapes on the map. This works in 2 steps:
+        1. Transfer all the shapes that are large enough from the individual maps
+            to a shares combined map.
+        2. Count The shapes in the combined map
+        """
         CURRENT_COLOR = 25
         PASSED_COLOR = 50
         OBS_COLOR = 100
@@ -469,35 +511,61 @@ class InspectionController:
         costmap1 = self.robot0.modules[0].global_costmap
         costmap2 = self.robot1.modules[0].global_costmap
 
-        costmap = np.maximum(costmap1, costmap2)
-        thre_map = ((costmap.astype(np.float) / 255) > COSTMAP_THRESHOLD).astype(np.float)
-        thre_map = (thre_map*100).astype(np.uint8)
-        count = -1 # The first one is the outer walls, two robots
-        # First nonempty index:
-        x_i, y_i = np.where(thre_map == OBS_COLOR)
+        combined_costmap = np.zeros(costmap1.shape).astype(np.uint8)
+
+        # Pass on each individual map, move the relevent shapes
+        # to combined map:
+        for i, costmap in enumerate([costmap1, costmap2]):
+            thre_map = ((costmap.astype(np.float) / 255) > COSTMAP_THRESHOLD).astype(np.float)
+            thre_map = (thre_map*100).astype(np.uint8)
+            # First nonempty index:
+            x_i, y_i = np.where(thre_map == OBS_COLOR)
+            while x_i.shape[0] != 0:
+                x = x_i[0]
+                y = y_i[0]
+                # Fill it
+                floodFill(thre_map, None, (y, x), CURRENT_COLOR)
+                # if we colored more than PIXEL_THRESHOLD pixels,
+                # and the the center of the shape is in the room,
+                # add one to the count
+                colored_pixels = (thre_map == CURRENT_COLOR).sum()
+
+                if colored_pixels > PIXEL_THRESHOLD:
+                    combined_costmap[np.where(thre_map == CURRENT_COLOR)] = OBS_COLOR
+                # Return them to a different color
+                thre_map[np.where(thre_map == CURRENT_COLOR)] = PASSED_COLOR
+                x_i, y_i = np.where(thre_map == OBS_COLOR)
+        
+        # Now Count in the combined map:
+        self.shapes = -1
+        x_i, y_i = np.where(combined_costmap == OBS_COLOR)
         while x_i.shape[0] != 0:
             x = x_i[0]
             y = y_i[0]
             # Fill it
-            floodFill(thre_map, None, (y, x), CURRENT_COLOR)
-            # if we colored more than PIXEL_THRESHOLD pixels add one to the count
-            colored_pixels = (thre_map == CURRENT_COLOR).sum()
+            floodFill(combined_costmap, None, (y, x), CURRENT_COLOR)
+            # if we colored more than PIXEL_THRESHOLD pixels,
+            # and the the center of the shape is in the room,
+            # add one to the count
+            colored_pixels = (combined_costmap == CURRENT_COLOR).sum()
+
             if colored_pixels > PIXEL_THRESHOLD:
-                count += 1
+                self.shapes += 1
             # Return them to a different color
-            thre_map[np.where(thre_map == CURRENT_COLOR)] = PASSED_COLOR
-            x_i, y_i = np.where(thre_map == OBS_COLOR)
-        if self.shapes != -5 and self.shapes != count:
-            plt.imshow(thre_map, cmap='gray')
-            plt.show()
-        self.shapes = count
+            combined_costmap[np.where(combined_costmap == CURRENT_COLOR)] = PASSED_COLOR
+            x_i, y_i = np.where(combined_costmap == OBS_COLOR)
+                
+        # plt.imshow(combined_costmap, cmap='gray')
+        # plt.show()
+
 
 class RoomInspectorModule(Module):
+    """ Module for the the individual robots in the inspection task
+    """
     def __init__(self, agent_id):
         super(RoomInspectorModule, self).__init__(agent_id, 'RoomInspectorModule')
 
-        self.cli_cmds = ['v', 'visited_map', 'r', 'room']
-        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
+        self.cli_cmds = ['v', 'visited_map', 'r', 'room', 'c', 'costmap']
         self.print_v(self.get_topic('/move_base/local_costmap/footprint'))
         self.print_v("Setting up room inspector module...")
         map_msg = rospy.wait_for_message(self.get_topic('/map'), OccupancyGrid, timeout=None)
@@ -510,6 +578,8 @@ class RoomInspectorModule(Module):
         self.map_height = self.visited_map.shape[0] # NOTE - this may be revered, as in map_height=shape[1] etc.
         self.map_width = self.visited_map.shape[1]
         self.starting_unexplored = (self.visited_map == 0).sum()
+
+        self.loc_sub = rospy.Subscriber(self.get_topic('/move_base/local_costmap/footprint'), PolygonStamped, update_position, self)
 
         self.percent_array = np.zeros((1,2))
         self.start_time = rospy.get_rostime().secs
@@ -547,6 +617,9 @@ class RoomInspectorModule(Module):
             plt.show()
         if cmd in ['r', 'room']:
             plt.imshow(self.room_map, cmap='gray')
+            plt.show()
+        if cmd in ['c', 'costmap']:
+            plt.imshow(self.global_costmap, cmap='gray')
             plt.show()
 
     def footprint_to_map(self, x, y):
