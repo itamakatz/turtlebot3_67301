@@ -9,12 +9,10 @@ import nav_msgs
 import matplotlib.pyplot as plt
 import math
 import actionlib
-from visited_map_module import VisitedMapModule
 from std_msgs import msg
 from sklearn.neighbors import kneighbors_graph
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import KMeans
-from roomba_module import RoombaModule
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from matplotlib.colors import ListedColormap
@@ -23,8 +21,11 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Point
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PolygonStamped
 from cv2 import floodFill
-from count_module import CountModule
 from collections import defaultdict
+
+# ============================================================================== #
+# =============================== magic numbers ================================ #
+# ============================================================================== #
 
 # Parameters Optimized for the default balls Gazebo in default map - Needs to be adjusted for different size:
 COSTMAP_THRESHOLD = 0.3
@@ -33,15 +34,17 @@ PIXEL_THRESHOLD = 50
 ROOM_NUMBER = 2
 ROOM_COLORS = ['white', 'red', 'blue']
 
-MIN_VECTOR_MAGNITUDE = 1e-2
 RADIUS = 5
 VISITED_COLOR = 45
 
-"""
-General Util Code:
-"""
+MIN_VECTOR_MAGNITUDE = 1e-2
+
+# ================================================================================ #
+# ================================================================================ #
+
 
 class Module(object):
+    '''The base class for all the modules in order t achieve modular code'''
 
     def __init__(self, agent_id, name):
         self.cli_cmds = []
@@ -60,7 +63,6 @@ class Module(object):
         else: print(self.verbose_name + str(msg))
     
     def get_topic(self, topic): 
-        # self.print_v("composed topic: '" + self.base_topic + topic + "'")
         return self.base_topic + topic
 
     @property
@@ -69,6 +71,7 @@ class Module(object):
         return abs(self.agent_id-1)
 
 class Modular:
+    '''class that runs the different Modules and can send cli forward'''
 
     def __init__(self, module_list):
         self.modules = module_list
@@ -103,8 +106,35 @@ class Modular:
         for module in self.cli_cmds[msg]: 
             module.cli(msg)
 
+# ================================================================================ #
+# =============================== utility methods ================================ #
+# ================================================================================ #
+
+def generate_dirt():
+    '''Functon to generate new dirt for testing'''
+    map_msg = rospy.wait_for_message('/tb3_0/map', OccupancyGrid, timeout=None)
+    visited_map = (np.array(map_msg.data).reshape((map_msg.info.width, map_msg.info.height)) != 0) * 100
+    visited_map = np.fliplr(np.rot90(visited_map))
+
+    map_resolution = map_msg.info.resolution
+    map_origin_translation = map_msg.info.origin.position
+    map_height = visited_map.shape[0]
+    map_width = visited_map.shape[1]
+    from scipy.ndimage.filters import gaussian_filter
+
+    visited_map = gaussian_filter(visited_map, sigma=7)
+
+    indices = np.where(visited_map == 0)
+    sampled_list = random.sample(range(len(indices[0])), 50)
+    plt.imshow(visited_map, cmap='gray')
+    plt.scatter(indices[1][sampled_list], indices[0][sampled_list], c='w')
+    plt.show()
+    xs = map(lambda x: round(((map_height - x) * map_resolution) + map_origin_translation.x ,2) ,indices[1][sampled_list])
+    ys = map(lambda y: round(((map_width  - y) * map_resolution) + map_origin_translation.y ,2) ,indices[0][sampled_list])
+    print(list(zip(ys, xs)))
 
 def get_position(agent_id):
+    '''return the current position'''
     try:
         current_location = rospy.wait_for_message('/tb3_%d/amcl_pose'%agent_id, PoseWithCovarianceStamped, 1)
         return current_location.pose.pose.position
@@ -113,6 +143,7 @@ def get_position(agent_id):
         return
 
 def get_dirt_list():
+    '''returns a list of the published dirts'''
     try:
         dirt = rospy.wait_for_message("/dirt",msg.String, 1)
         dirt_list = eval(dirt.data)
@@ -123,6 +154,7 @@ def get_dirt_list():
         return []
 
 def get_dirt_distances(agent_id, dirt_list, service_invoke_agent_id = None):
+    '''returns the distance from the agent to the each dirt of the list'''
 
     if(service_invoke_agent_id is None): service_invoke_agent_id = agent_id
 
@@ -148,11 +180,9 @@ def get_dirt_distances(agent_id, dirt_list, service_invoke_agent_id = None):
 
         import nav_msgs.srv as srv
         req = srv.GetPlan()
-        # req = nav_msgs.srv.GetPlan()
         req.start = start
         req.goal = Goal
         req.tolerance = .5
-        # req.tolerance = 2
         
         get_plan = rospy.ServiceProxy('/tb3_%d/move_base/make_plan'%service_invoke_agent_id, nav_msgs.srv.GetPlan)
         resp = get_plan(req.start, req.goal, req.tolerance)
@@ -163,7 +193,7 @@ def get_dirt_distances(agent_id, dirt_list, service_invoke_agent_id = None):
     return lengths
     
 def poses_to_length(poses_list):
-
+    '''calculates the total lenth of a path from the poses'''
     length = 0
     for i in range(len(poses_list) - 1):
         position_a_x = poses_list[i].pose.position.x
@@ -175,7 +205,7 @@ def poses_to_length(poses_list):
     return length    
 
 def movebase_client(agent_id,x,y,verbose = True):
-
+    '''a simple local movebase client'''
     if(verbose): print("moving to: " + str(x) + "," + str(y))
 
     client = actionlib.SimpleActionClient('/tb3_%d/move_base'%agent_id,MoveBaseAction) # Create an action client called "move_base" with action definition file "MoveBaseAction"
@@ -187,8 +217,6 @@ def movebase_client(agent_id,x,y,verbose = True):
     goal.target_pose.pose.position.y = y
     goal.target_pose.pose.orientation.w = 1.0 # No rotation of the mobile base frame w.r.t. map frame
     client.send_goal(goal) # Sends the goal to the action server.
-    # rospy.loginfo("New goal command received!")
-    # wait = client.wait_for_result(rospy.Duration(1)) # Waits for the server to finish performing the action.
     wait = client.wait_for_result() # Waits for the server to finish performing the action.
 
     if not wait:
@@ -196,12 +224,10 @@ def movebase_client(agent_id,x,y,verbose = True):
         rospy.logerr("Action server not available!")
         rospy.signal_shutdown("Action server not available!")
     else:
-        # print("finished!")
         return client.get_result()   # Result of executing the action
 
-
 def get_dirt_angles(agent_id, dirt_list):
-
+    '''returns a list of the angle in radian of each dirt from the current agent orientation'''
     try:
         current_pose = rospy.wait_for_message('/tb3_%d/amcl_pose'%agent_id, PoseWithCovarianceStamped, 1)
         current_position = current_pose.pose.pose.position
@@ -219,23 +245,28 @@ def get_dirt_angles(agent_id, dirt_list):
             true_angle += 2*math.pi
         if(true_angle > math.pi): 
             true_angle = true_angle - 2*math.pi
-        # true_angle = abs(true_angle-2*math.pi) - math.pi
         angles[(dirt[0], dirt[1])] = true_angle
 
     return angles
 
 def angle_between_vectors(v1, v2):
+    '''returns the angle between two vectors'''
     return np.math.atan2(np.linalg.det([v1,v2]),np.dot(v1,v2)) + math.pi
 
 def distance_from_line(p1, vec, p0):
+    '''find the closest distance form a line to a point'''
     x1, y1 = p1[0], p1[1]
     x2, y2 = p1[0] - vec[0], p1[1] - vec[1]
     x0, y0 = p0[0], p0[1]
     return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
 
-def calc_potential(distance): return distance**-2 if (distance != 0) else 1000
+def calc_potential(distance): 
+    '''returns the the inverse square of the distance. 
+       this can be looked at as a potential field'''
+    return distance**-2 if (distance != 0) else 1000
 
 def update_adversial_position(msg, self):
+    '''callback for the amcl_pose topic subscription'''
     last_p = self.opponent_current_p
     self.opponent_current_p = msg.pose.pose.position
     if(last_p is not None):
@@ -249,6 +280,31 @@ def update_adversial_position(msg, self):
             self.opponent_vect = opponent_new_vect 
             self.new_opponent_data = True
 
+# ======================================================================== #
+# ============================== Cleaning ================================ #
+# ======================================================================== #
+
+def vacuum_cleaning(agent_id):
+       
+    print('start cleaning')
+    # robot = Modular([
+    #     AdvancedCollectorModule(agent_id)
+    # ])
+    
+    if(agent_id == 0):
+        robot = Modular([
+            AdvancedCollectorModule(agent_id)
+        ])
+    elif(agent_id == 1):
+        robot = Modular([
+            # AdvancedCollectorModule(agent_id)
+            BaseCollectorModule(agent_id)
+        ])
+    else:
+        raise NotImplementedError
+
+    robot.run()
+
 class AdvancedCollectorModule(Module):
 
     def __init__(self, agent_id):
@@ -260,10 +316,10 @@ class AdvancedCollectorModule(Module):
         self.opponent_vect = None
         self.opponent_vect_angle = None
         self.loc_sub = rospy.Subscriber('/tb3_%d/amcl_pose'%self.other_agent_id, PoseWithCovarianceStamped, update_adversial_position, self)
+        
 
     def update(self): 
         current_p = get_position(self.agent_id)
-        # self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
 
         dirt_list = get_dirt_list()
 
@@ -277,7 +333,6 @@ class AdvancedCollectorModule(Module):
         self_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
 
         if(self.new_opponent_data == True and sqrt(self.opponent_vect.x**2+self.opponent_vect.y**2) > MIN_VECTOR_MAGNITUDE):
-            print("A")
             self.new_opponent_data = False 
             
             all_opponent_dirt_distances = get_dirt_distances(self.other_agent_id, dirt_list, self.agent_id)
@@ -291,23 +346,6 @@ class AdvancedCollectorModule(Module):
             
             feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]]
 
-            # print("\n\n")
-            # print("all_opponent_dirt_distances")
-            # print(all_opponent_dirt_distances)
-            # print("--------------------------------\nall_opponent_dirt_angles")
-            # print(all_opponent_dirt_angles)
-            # print("--------------------------------\nall_dirt_distance_from_line")       
-            # print(all_dirt_distance_from_line)
-            # print("--------------------------------\nall_potential_dirt_distances")
-            # print(all_potential_dirt_distances)
-            # print("--------------------------------\nall_potential_dirt_angles")       
-            # print(all_potential_dirt_angles)
-            # print("--------------------------------\nall_potential_from_line")
-            # print(all_potential_from_line)
-            # print("--------------------------------\nfeasible_dirt_list")       
-            # print(feasible_dirt_list)            
-            # print("\n\n")
-
             feasible_potential_dirt_distances = {dirt: all_potential_dirt_distances[dirt] for dirt in feasible_dirt_list}
             feasible_potential_dirt_angles = {dirt: all_potential_dirt_angles[dirt] for dirt in feasible_dirt_list}
             feasible_potential_dirt_distances = {dirt: all_potential_from_line[dirt] for dirt in feasible_dirt_list}
@@ -319,29 +357,15 @@ class AdvancedCollectorModule(Module):
 
             feasible_overall_potential = {dirt: all_overall_potential[dirt] for dirt in feasible_dirt_list}
 
-            # print("\n\n")
-            # print("potential_dirt_distances")
-            # print(potential_dirt_distances)
-            # print("--------------------------------\npotential_dirt_angles")
-            # print(potential_dirt_angles)
-            # print("--------------------------------\npotential_from_line")
-            # print(potential_from_line)
-            # print("--------------------------------\noverall_potential")       
-            # print(overall_potential)
-            # print("\n\n")
-
             if(feasible_dirt_list):
-                print("B")
                 # min since the calculation was done for the inverse 
                 all_min_dirt = min(all_overall_potential, key=all_overall_potential.get)
                 feasible_min_dirt = min(feasible_overall_potential, key=feasible_overall_potential.get)
                 if(all_overall_potential[all_min_dirt] == feasible_overall_potential[feasible_min_dirt]):
-                    print("C")
                     # recall that self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]
                     p = random.random()
                     print("p: " + str(p) +". threshold: " + str(self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]))
                     if(p > self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]):
-                        print("D")
                         self.print_v("mooving to: " + str(all_min_dirt) +" instead of: " + str(min(self_dirt_distances, key=self_dirt_distances.get)))
                         movebase_client(self.agent_id, all_min_dirt[0], all_min_dirt[1], False)
                         return
@@ -359,7 +383,6 @@ class BaseCollectorModule(Module):
 
     def update(self):
         current_p = get_position(self.agent_id)
-        # self.print_v("Current location: " + str(current_p.x) + "," + str(current_p.y))
 
         dirt_list = get_dirt_list()
 
@@ -374,45 +397,12 @@ class BaseCollectorModule(Module):
         closest_dirt = min(updated_dirt_distances, key=updated_dirt_distances.get)
         movebase_client(self.agent_id, closest_dirt[0], closest_dirt[1]) 
 
-"""
-Code for Cleaning:
-"""
-def vacuum_cleaning(agent_id):
-       
-    print('start cleaning')
-    # robot = Modular([
-    #     BaseCollectorModule(agent_id),
-    #     # VisitedMapModule(agent_id)
-    # ])
-    
-    if(agent_id == 0):
-        robot = Modular([
-            BaseCollectorModule(agent_id)
-        ])
-    elif(agent_id == 1):
-        robot = Modular([
-            AdvancedCollectorModule(agent_id)
-        ])
-    else:
-        raise NotImplementedError
 
-    # robot1 = Modular([
-    #     BaseCollectorModule(0),
-    # ])
-    # robot2 = Modular([
-    #     BaseCollectorModule(1),
-    # ])
+# ========================================================================== #
+# ============================== Inspection ================================ #
+# ========================================================================== #
 
-    # while(not rospy.is_shutdown()):
-    #     robot1.run_single_round()
-    #     robot2.run_single_round()
 
-    # print("Running modular robot " + str(agent_id))
-    robot.run()
-
-"""
-Inspection code:
-"""
 def inspection():
     inspection_controller = InspectionController()
     inspection_controller.run()
@@ -488,9 +478,6 @@ class InspectionController:
 
         # L_2^2 Norm:
         l22 = lambda pos1, pos2: (pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2
-        # print("Centers is ", centers)
-        # print("pos0 is ", pos0)
-        # print("pos1 is ", pos1)
         if l22(pos0, centers[0]) + l22(pos1, centers[1]) < l22(pos1, centers[0]) + l22(pos0, centers[1]):
             return {0: 1, 1: 2} # For robot0 room number 1 etc.
         else: 
@@ -519,8 +506,6 @@ class InspectionController:
 
         self.room_map = np.fliplr(np.rot90(room_map))
         # tell imshow about color map so that only set colors are used
-        # plt.imshow(room_map, cmap=ListedColormap(ROOM_COLORS))
-        # plt.show()
         return self.allocate_rooms()
 
     def count_shapes(self):
@@ -580,10 +565,6 @@ class InspectionController:
             # Return them to a different color
             combined_costmap[np.where(combined_costmap == CURRENT_COLOR)] = PASSED_COLOR
             x_i, y_i = np.where(combined_costmap == OBS_COLOR)
-                
-        # plt.imshow(combined_costmap, cmap='gray')
-        # plt.show()
-
 
 class RoomInspectorModule(Module):
     """ Module for the the individual robots in the inspection task
@@ -679,6 +660,8 @@ class RoomInspectorModule(Module):
 
 # Used as a callback:
 def update_position(msg, mod):
+    '''callback for the /move_base/local_costmap/footprint topic subscription'''
+    
     center_x = sum([p.x for p in msg.polygon.points]) / len(msg.polygon.points)
     center_y = sum([p.y for p in msg.polygon.points]) / len(msg.polygon.points)
     
@@ -699,6 +682,8 @@ def update_position(msg, mod):
     mod.percentage = (mod.starting_unexplored - unexplored) * 100 / mod.starting_unexplored
     mod.percent_array = np.append(mod.percent_array, np.array([[rospy.get_rostime().secs - mod.start_time, mod.percentage]]), axis=0)
 
+# ========================================================================== #
+# ========================================================================== #
 
 # If the python node is executed as main process (sourced directly)
 if __name__ == '__main__':
