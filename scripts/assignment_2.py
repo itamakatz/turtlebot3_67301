@@ -309,6 +309,7 @@ class AdvancedCollectorModule(Module):
 
     def __init__(self, agent_id):
         super(AdvancedCollectorModule, self).__init__(agent_id, 'AdvancedCollectorModule')
+        self.print_v("Starting init")
         self.cli_cmds = []
         self.finish = False
         self.new_opponent_data = False
@@ -316,7 +317,7 @@ class AdvancedCollectorModule(Module):
         self.opponent_vect = None
         self.opponent_vect_angle = None
         self.loc_sub = rospy.Subscriber('/tb3_%d/amcl_pose'%self.other_agent_id, PoseWithCovarianceStamped, update_adversial_position, self)
-        
+        self.print_v("Finished init")
 
     def update(self): 
         current_p = get_position(self.agent_id)
@@ -336,6 +337,13 @@ class AdvancedCollectorModule(Module):
             self.new_opponent_data = False 
             
             all_opponent_dirt_distances = get_dirt_distances(self.other_agent_id, dirt_list, self.agent_id)
+
+            feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]]
+            
+            if(not feasible_dirt_list):
+                goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
+                movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
+                
             all_opponent_dirt_angles = get_dirt_angles(self.other_agent_id, dirt_list)
             all_dirt_distance_from_line = dict(map(lambda dirt: (dirt, distance_from_line(\
                 [self.opponent_current_p.x, self.opponent_current_p.y], [self.opponent_vect.x, self.opponent_vect.y], dirt)), dirt_list))
@@ -344,8 +352,6 @@ class AdvancedCollectorModule(Module):
             all_potential_dirt_angles = dict(map(lambda dirt: (dirt, 1/(np.sign(self.opponent_vect_angle)*all_opponent_dirt_angles[dirt])), all_opponent_dirt_angles.keys()))
             all_potential_from_line = dict(map(lambda dirt: (dirt, calc_potential(all_dirt_distance_from_line[dirt])), all_dirt_distance_from_line))
             
-            feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]]
-
             feasible_potential_dirt_distances = {dirt: all_potential_dirt_distances[dirt] for dirt in feasible_dirt_list}
             feasible_potential_dirt_angles = {dirt: all_potential_dirt_angles[dirt] for dirt in feasible_dirt_list}
             feasible_potential_dirt_distances = {dirt: all_potential_from_line[dirt] for dirt in feasible_dirt_list}
@@ -364,10 +370,10 @@ class AdvancedCollectorModule(Module):
                 if(all_overall_potential[all_min_dirt] == feasible_overall_potential[feasible_min_dirt]):
                     # recall that self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]
                     p = random.random()
-                    print("p: " + str(p) +". threshold: " + str(self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]))
+                    # print("p: " + str(p) +". threshold: " + str(self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]))
                     if(p > self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]):
                         self.print_v("mooving to: " + str(all_min_dirt) +" instead of: " + str(min(self_dirt_distances, key=self_dirt_distances.get)))
-                        movebase_client(self.agent_id, all_min_dirt[0], all_min_dirt[1], False)
+                        movebase_client(self.agent_id, all_min_dirt[0], all_min_dirt[1])
                         return
 
         goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
@@ -377,9 +383,10 @@ class BaseCollectorModule(Module):
 
     def __init__(self, agent_id):
         super(BaseCollectorModule, self).__init__(agent_id, 'BaseCollectorModule')
+        self.print_v("Starting init")
         self.cli_cmds = []
-        self.print_v("Finished init")
         self.finish = False
+        self.print_v("Finished init")
 
     def update(self):
         current_p = get_position(self.agent_id)
