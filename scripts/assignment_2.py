@@ -233,7 +233,7 @@ def distance_from_line(p1, vec, p0):
     x0, y0 = p0[0], p0[1]
     return abs((x2-x1)*(y1-y0)-(x1-x0)*(y2-y1))/sqrt((x2-x1)**2+(y2-y1)**2)
 
-def calc_potential(distance): return distance**-2
+def calc_potential(distance): return distance**-2 if (distance != 0) else 1000
 
 def update_adversial_position(msg, self):
     last_p = self.opponent_current_p
@@ -277,26 +277,47 @@ class AdvancedCollectorModule(Module):
         self_dirt_distances = get_dirt_distances(self.agent_id, dirt_list)
 
         if(self.new_opponent_data == True and sqrt(self.opponent_vect.x**2+self.opponent_vect.y**2) > MIN_VECTOR_MAGNITUDE):
-
+            print("A")
             self.new_opponent_data = False 
             
-            opponent_dirt_distances = get_dirt_distances(self.other_agent_id, dirt_list, self.agent_id)
-            feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances[dirt] < opponent_dirt_distances[dirt]]
-
-            # subsetting the pairs
-            opponent_dirt_distances = [(dirt, opponent_dirt_distances[dirt]) for dirt in feasible_dirt_list]
-            opponent_dirt_angles = get_dirt_angles(self.other_agent_id, feasible_dirt_list)
-            dirt_distance_from_line = list(map(lambda dirt: (dirt, distance_from_line(\
-                [self.opponent_current_p.x, self.opponent_current_p.y], [self.opponent_vect.x, self.opponent_vect.y], dirt)), feasible_dirt_list))
+            all_opponent_dirt_distances = get_dirt_distances(self.other_agent_id, dirt_list, self.agent_id)
+            all_opponent_dirt_angles = get_dirt_angles(self.other_agent_id, dirt_list)
+            all_dirt_distance_from_line = dict(map(lambda dirt: (dirt, distance_from_line(\
+                [self.opponent_current_p.x, self.opponent_current_p.y], [self.opponent_vect.x, self.opponent_vect.y], dirt)), dirt_list))
             
-            potential_dirt_distances = dict(map(lambda pair: (pair[0], calc_potential(pair[1])), opponent_dirt_distances))
-            potential_dirt_angles = dict(map(lambda dirt: (dirt, 1/(np.sign(self.opponent_vect_angle)*opponent_dirt_angles[dirt])), opponent_dirt_angles))
-            potential_from_line = dict(map(lambda pair: (pair[0], calc_potential(pair[1])), dirt_distance_from_line))
+            all_potential_dirt_distances = dict(map(lambda dirt: (dirt, calc_potential(all_opponent_dirt_distances[dirt])), all_opponent_dirt_distances))
+            all_potential_dirt_angles = dict(map(lambda dirt: (dirt, 1/(np.sign(self.opponent_vect_angle)*all_opponent_dirt_angles[dirt])), all_opponent_dirt_angles.keys()))
+            all_potential_from_line = dict(map(lambda dirt: (dirt, calc_potential(all_dirt_distance_from_line[dirt])), all_dirt_distance_from_line))
+            
+            feasible_dirt_list = [dirt for dirt in dirt_list if self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]]
 
-            overall_potential = {}
-            for dirt in feasible_dirt_list:
-                weight = potential_dirt_distances[dirt]*potential_dirt_angles[dirt]*potential_from_line[dirt]
-                overall_potential[dirt] = weight
+            # print("\n\n")
+            # print("all_opponent_dirt_distances")
+            # print(all_opponent_dirt_distances)
+            # print("--------------------------------\nall_opponent_dirt_angles")
+            # print(all_opponent_dirt_angles)
+            # print("--------------------------------\nall_dirt_distance_from_line")       
+            # print(all_dirt_distance_from_line)
+            # print("--------------------------------\nall_potential_dirt_distances")
+            # print(all_potential_dirt_distances)
+            # print("--------------------------------\nall_potential_dirt_angles")       
+            # print(all_potential_dirt_angles)
+            # print("--------------------------------\nall_potential_from_line")
+            # print(all_potential_from_line)
+            # print("--------------------------------\nfeasible_dirt_list")       
+            # print(feasible_dirt_list)            
+            # print("\n\n")
+
+            feasible_potential_dirt_distances = {dirt: all_potential_dirt_distances[dirt] for dirt in feasible_dirt_list}
+            feasible_potential_dirt_angles = {dirt: all_potential_dirt_angles[dirt] for dirt in feasible_dirt_list}
+            feasible_potential_dirt_distances = {dirt: all_potential_from_line[dirt] for dirt in feasible_dirt_list}
+
+            all_overall_potential = {}
+            for dirt in dirt_list:
+                weight = all_potential_dirt_distances[dirt]*all_potential_dirt_angles[dirt]*all_potential_from_line[dirt]
+                all_overall_potential[dirt] = weight
+
+            feasible_overall_potential = {dirt: all_overall_potential[dirt] for dirt in feasible_dirt_list}
 
             # print("\n\n")
             # print("potential_dirt_distances")
@@ -309,16 +330,21 @@ class AdvancedCollectorModule(Module):
             # print(overall_potential)
             # print("\n\n")
 
-            if(overall_potential):
+            if(feasible_dirt_list):
+                print("B")
                 # min since the calculation was done for the inverse 
-                goto_dirt = min(overall_potential, key=overall_potential.get)
-                # recall that self_dirt_distances[dirt] < opponent_dirt_distances[dirt]
-                p = random.random()
-                print("p: " + str(p) +". threshold: " + str((1-self_dirt_distances[dirt] / opponent_dirt_distances[dirt])))
-                if((1-self_dirt_distances[dirt] / opponent_dirt_distances[dirt]) > p):
-                    self.print_v("mooving to: " + str(goto_dirt) +" instead of: " + str(min(self_dirt_distances, key=self_dirt_distances.get)))
-                    movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1], False)
-                    return
+                all_min_dirt = min(all_overall_potential, key=all_overall_potential.get)
+                feasible_min_dirt = min(feasible_overall_potential, key=feasible_overall_potential.get)
+                if(all_overall_potential[all_min_dirt] == feasible_overall_potential[feasible_min_dirt]):
+                    print("C")
+                    # recall that self_dirt_distances[dirt] < all_opponent_dirt_distances[dirt]
+                    p = random.random()
+                    print("p: " + str(p) +". threshold: " + str(self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]))
+                    if(p > self_dirt_distances[dirt] / all_opponent_dirt_distances[dirt]):
+                        print("D")
+                        self.print_v("mooving to: " + str(all_min_dirt) +" instead of: " + str(min(self_dirt_distances, key=self_dirt_distances.get)))
+                        movebase_client(self.agent_id, all_min_dirt[0], all_min_dirt[1], False)
+                        return
 
         goto_dirt = min(self_dirt_distances, key=self_dirt_distances.get)
         movebase_client(self.agent_id, goto_dirt[0], goto_dirt[1])
@@ -682,7 +708,7 @@ if __name__ == '__main__':
 
     if exec_mode == 'cleaning':        
         agent_id = int(sys.argv[2])
-        rospy.init_node('assignment_2.%d'%agent_id)
+        rospy.init_node('assignment_2_%d'%agent_id)
         vacuum_cleaning(agent_id)
         print('agent id:' + sys.argv[2])        
     elif exec_mode == 'inspection':
